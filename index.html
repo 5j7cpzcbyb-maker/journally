@@ -26,42 +26,72 @@
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        function AuthScreen({ onAuth }) {
+        function AuthScreen() {
             const [isSignUp, setIsSignUp] = useState(false);
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
-            const [msg, setMsg] = useState('');
+            const [msg, setMsg] = useState({ text: '', type: '' });
 
             const handleAuth = async (e) => {
                 e.preventDefault();
-                setMsg('Processing...');
-                const { data, error } = isSignUp 
+                setMsg({ text: 'Processing...', type: 'info' });
+                const { error } = isSignUp 
                     ? await supabaseClient.auth.signUp({ email, password })
                     : await supabaseClient.auth.signInWithPassword({ email, password });
                 
-                if (error) setMsg(error.message);
-                else if (isSignUp) setMsg('Check your email for confirmation!');
+                if (error) setMsg({ text: error.message, type: 'error' });
+                else if (isSignUp) setMsg({ text: 'Check your email for confirmation!', type: 'success' });
+            };
+
+            const handleResetPassword = async () => {
+                if (!email) {
+                    setMsg({ text: 'Please enter your email address first.', type: 'error' });
+                    return;
+                }
+                setMsg({ text: 'Sending reset link...', type: 'info' });
+                const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+                    redirectTo: window.location.origin,
+                });
+                if (error) setMsg({ text: error.message, type: 'error' });
+                else setMsg({ text: 'Password reset email sent!', type: 'success' });
             };
 
             return (
-                <div className="min-h-screen flex flex-col justify-center p-8 fade-in">
+                <div className="min-h-screen flex flex-col justify-center p-8 fade-in bg-white">
                     <h1 className="text-5xl font-black italic text-indigo-600 tracking-tighter mb-2">Journally</h1>
                     <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mb-10">
                         {isSignUp ? 'Create Account' : 'Welcome Back'}
                     </p>
                     
                     <form onSubmit={handleAuth} className="space-y-4">
-                        <input type="email" placeholder="Email" className="w-full p-4 rounded-2xl border border-slate-200 outline-none focus:border-indigo-400" onChange={e => setEmail(e.target.value)} required />
-                        <input type="password" placeholder="Password" className="w-full p-4 rounded-2xl border border-slate-200 outline-none focus:border-indigo-400" onChange={e => setPassword(e.target.value)} required />
+                        <input type="email" placeholder="Email" className="w-full p-4 rounded-2xl bg-slate-50 border border-transparent focus:border-indigo-400 outline-none transition-all" value={email} onChange={e => setEmail(e.target.value)} required />
+                        {!msg.text.includes('sent') && (
+                            <input type="password" placeholder="Password" className="w-full p-4 rounded-2xl bg-slate-50 border border-transparent focus:border-indigo-400 outline-none transition-all" value={password} onChange={e => setPassword(e.target.value)} required={!isSignUp} />
+                        )}
                         <button className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-lg shadow-indigo-100 active:scale-95 transition-all">
                             {isSignUp ? 'SIGN UP' : 'LOG IN'}
                         </button>
                     </form>
                     
-                    <button onClick={() => setIsSignUp(!isSignUp)} className="mt-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">
-                        {isSignUp ? 'Already have an account? Log In' : 'Need an account? Sign Up'}
-                    </button>
-                    {msg && <p className="mt-4 text-center text-xs font-bold text-indigo-500">{msg}</p>}
+                    <div className="mt-8 flex flex-col gap-4 text-center">
+                        {!isSignUp && (
+                            <button onClick={handleResetPassword} className="text-[10px] font-black text-indigo-500 uppercase tracking-widest hover:underline">
+                                Forgot my password
+                            </button>
+                        )}
+                        <button onClick={() => { setIsSignUp(!isSignUp); setMsg({text:'', type:''}); }} className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            {isSignUp ? 'Already have an account? Log In' : 'Need an account? Sign Up'}
+                        </button>
+                    </div>
+
+                    {msg.text && (
+                        <div className={`mt-6 p-4 rounded-xl text-center text-xs font-bold ${
+                            msg.type === 'error' ? 'bg-red-50 text-red-500' : 
+                            msg.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-indigo-50 text-indigo-600'
+                        }`}>
+                            {msg.text}
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -126,7 +156,7 @@
                     {/* MENU */}
                     <div className={`fixed inset-0 z-[60] bg-slate-900/10 backdrop-blur-sm transition-opacity ${isMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                         <div className={`absolute right-0 top-0 h-full w-64 bg-white shadow-2xl transition-transform duration-300 p-8 ${isMenuOpen ? 'translate-x-0' : 'translate-x-full'}`} onClick={e => e.stopPropagation()}>
-                            <h2 className="text-xl font-black italic text-indigo-600 mb-10">MENU</h2>
+                            <h2 className="text-xl font-black italic text-indigo-600 mb-10 tracking-tighter">MENU</h2>
                             <button onClick={() => setIsMenuOpen(false)} className="block w-full text-left font-bold text-slate-700 mb-6">Settings</button>
                             <button onClick={() => supabaseClient.auth.signOut()} className="block w-full text-left font-bold text-red-500">Log Out</button>
                         </div>
@@ -155,11 +185,11 @@
                                                     e.stopPropagation();
                                                     const n = prompt("Rename:", g.name);
                                                     if(n) supabaseClient.from('goals').update({name: n}).eq('id', g.id).then(() => fetchData(session));
-                                                }} className="bg-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">Edit</button>
+                                                }} className="bg-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm">Edit</button>
                                                 <button onClick={(e) => {
                                                     e.stopPropagation();
                                                     supabaseClient.from('goals').update({deleted_at: new Date().toISOString()}).eq('id', g.id).then(() => fetchData(session));
-                                                }} className="bg-red-500 px-4 py-2 rounded-xl text-[10px] font-black text-white uppercase">Archive</button>
+                                                }} className="bg-red-500 px-4 py-2 rounded-xl text-[10px] font-black text-white uppercase shadow-sm">Archive</button>
                                             </div>
                                             <div 
                                                 style={{ transform: swipedId === g.id ? 'translateX(-160px)' : 'translateX(0)' }}
@@ -181,7 +211,7 @@
                                 <button onClick={async () => {
                                     const n = prompt("New Habit:");
                                     if(n) { await supabaseClient.from('goals').insert([{name: n, user_id: session.user.id}]); fetchData(session); }
-                                }} className="w-full py-6 rounded-3xl border-2 border-dashed border-slate-200 text-slate-300 font-bold uppercase text-[10px] tracking-widest">+ ADD</button>
+                                }} className="w-full py-6 rounded-3xl border-2 border-dashed border-slate-200 text-slate-300 font-bold uppercase text-[10px] tracking-widest hover:border-indigo-200 transition-colors">+ ADD</button>
                             </div>
                         ) : (
                             <div className="space-y-6">
