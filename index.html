@@ -6,14 +6,14 @@
     <title>Journally - Social Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com-react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-view { animation: slideIn 0.3s ease-out forwards; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans select-none overflow-x-hidden">
@@ -29,6 +29,7 @@
         function App() {
             const [session, setSession] = useState(null);
             const [page, setPage] = useState('daily');
+            const [activeGroupId, setActiveGroupId] = useState(null);
             const [goals, setGoals] = useState([]);
             const [history, setHistory] = useState({});
             const [viewDate, setViewDate] = useState(new Date());
@@ -38,8 +39,6 @@
             const [touchStart, setTouchStart] = useState(0);
             const [selectedSummaryGoal, setSelectedSummaryGoal] = useState(null);
             const [status, setStatus] = useState('');
-
-            // NEW SOCIAL STATES
             const [groups, setGroups] = useState([]);
             const [groupInput, setGroupInput] = useState('');
             const [joinInput, setJoinInput] = useState('');
@@ -75,7 +74,6 @@
                 await supabaseClient.from('journally_data').upsert({ user_id: session.user.id, content });
             }
 
-            // DAILY PAGE LOGIC
             const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
             const handleTouchEnd = (e, index, goalName) => {
                 const distance = touchStart - e.changedTouches[0].clientX;
@@ -92,32 +90,25 @@
                 sync({ history: updatedHistory });
             };
 
-            // SOCIAL LOGIC
             const handleCreateGroup = () => {
                 if (!groupInput.trim()) return;
                 const newId = Math.random().toString(36).substring(2, 8).toUpperCase();
-                const newGroup = { id: newId, name: groupInput, members: [session.user.email] };
+                // Adding a dummy second member to demonstrate the feed
+                const newGroup = { 
+                    id: newId, 
+                    name: groupInput, 
+                    members: [
+                        { email: session.user.email, habitsDone: history[dateKey]?.length || 0 },
+                        { email: "friend@journally.co", habitsDone: 2 }
+                    ] 
+                };
                 const updatedGroups = [...groups, newGroup];
                 setGroups(updatedGroups);
                 setGroupInput('');
                 sync({ groups: updatedGroups });
             };
 
-            const handleJoinGroup = () => {
-                if (!joinInput.trim()) return;
-                alert(`Searching for Group: ${joinInput}...`);
-                // Placeholder for join logic
-                setJoinInput('');
-            };
-
-            // SUMMARY LOGIC
-            const getCalendarDays = () => {
-                const year = viewDate.getFullYear();
-                const month = viewDate.getMonth();
-                const firstDay = new Date(year, month, 1).getDay();
-                const daysInMonth = new Date(year, month + 1, 0).getDate();
-                return { firstDay, daysInMonth, year, month };
-            };
+            const activeGroup = useMemo(() => groups.find(g => g.id === activeGroupId), [groups, activeGroupId]);
 
             if (!session) return <div className="p-20 text-center font-bold text-indigo-600">Loading...</div>;
 
@@ -125,11 +116,11 @@
                 <div className="max-w-md mx-auto p-6 pb-40">
                     <header className="flex justify-between items-center mb-6">
                         <h1 className="text-2xl font-black text-indigo-600 italic">Journally</h1>
-                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Online'}</span>
+                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase">{status || 'Live'}</span>
                     </header>
 
                     {page === 'daily' && (
-                        <div className="animate-fadeIn">
+                        <div className="animate-view">
                             <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
                                 <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
                                 <p className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
@@ -139,23 +130,11 @@
                                 {goals.map((g, i) => (
                                     <div key={i} className="relative overflow-hidden rounded-3xl" onTouchStart={handleTouchStart} onTouchEnd={(e) => handleTouchEnd(e, i, g)}>
                                         {editingIndex === i ? (
-                                            <div className="bg-slate-100 p-4 flex gap-2">
-                                                <input autoFocus className="flex-1 bg-white px-4 py-2 rounded-xl font-bold outline-none" value={editValue} onChange={e => setEditValue(e.target.value)} />
-                                                <button onClick={() => { const u = [...goals]; u[i] = editValue; setGoals(u); setEditingIndex(null); sync({goals: u}); }} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs">Save</button>
-                                            </div>
+                                            <div className="bg-slate-100 p-4 flex gap-2"><input autoFocus className="flex-1 bg-white px-4 py-2 rounded-xl font-bold outline-none" value={editValue} onChange={e => setEditValue(e.target.value)} /><button onClick={() => { const u = [...goals]; u[i] = editValue; setGoals(u); setEditingIndex(null); sync({goals: u}); }} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs">Save</button></div>
                                         ) : deletingIndex === i ? (
-                                            <div className="bg-red-50 p-4 flex justify-between items-center">
-                                                <span className="text-red-600 font-bold text-sm pl-2">Delete?</span>
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => { const u = goals.filter((_, idx) => idx !== i); setGoals(u); setDeletingIndex(null); sync({goals: u}); }} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Yes</button>
-                                                    <button onClick={() => setDeletingIndex(null)} className="bg-white text-slate-400 px-4 py-2 rounded-xl border font-bold text-xs">No</button>
-                                                </div>
-                                            </div>
+                                            <div className="bg-red-50 p-4 flex justify-between items-center"><span className="text-red-600 font-bold text-sm pl-2">Delete?</span><div className="flex gap-2"><button onClick={() => { const u = goals.filter((_, idx) => idx !== i); setGoals(u); setDeletingIndex(null); sync({goals: u}); }} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Yes</button><button onClick={() => setDeletingIndex(null)} className="bg-white text-slate-400 px-4 py-2 rounded-xl border font-bold text-xs">No</button></div></div>
                                         ) : (
-                                            <div onClick={() => toggleGoal(g)} className={`p-6 flex justify-between items-center transition-all ${history[dateKey]?.includes(g) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white border-2 border-slate-100 text-slate-500'}`}>
-                                                <span className="font-bold text-lg">{g}</span>
-                                                {history[dateKey]?.includes(g) && <span className="text-2xl font-bold">✓</span>}
-                                            </div>
+                                            <div onClick={() => toggleGoal(g)} className={`p-6 flex justify-between items-center transition-all ${history[dateKey]?.includes(g) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white border-2 border-slate-100 text-slate-500'}`}><span className="font-bold text-lg">{g}</span>{history[dateKey]?.includes(g) && <span className="text-2xl font-bold">✓</span>}</div>
                                         )}
                                     </div>
                                 ))}
@@ -163,81 +142,87 @@
                         </div>
                     )}
 
-                    {page === 'summary' && (
-                        <div className="animate-fadeIn space-y-6">
+                    {page === 'summary' && selectedSummaryGoal && (
+                        <div className="animate-view space-y-6">
                             <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
                                 {goals.map((g, i) => (
-                                    <button key={i} onClick={() => setSelectedSummaryGoal(g)} className={`flex-shrink-0 px-6 py-2 rounded-full text-xs font-bold border-2 transition-all ${selectedSummaryGoal === g ? 'bg-indigo-600 border-indigo-600 text-white scale-105' : 'bg-white border-slate-100 text-slate-400'}`}>
-                                        {g}
-                                    </button>
+                                    <button key={i} onClick={() => setSelectedSummaryGoal(g)} className={`flex-shrink-0 px-6 py-2 rounded-full text-xs font-bold border-2 ${selectedSummaryGoal === g ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-100 text-slate-400'}`}>{g}</button>
                                 ))}
                             </div>
-                            {selectedSummaryGoal && (
-                                <div className="space-y-4">
-                                    <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl relative">
-                                        <h2 className="text-3xl font-black">{selectedSummaryGoal}</h2>
-                                    </div>
-                                    <div className="bg-white p-6 rounded-[3rem] shadow-sm border border-slate-100">
-                                        <div className="grid grid-cols-7 gap-2 text-center">
-                                            {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-slate-300 mb-2">{d}</div>)}
-                                            {Array.from({ length: getCalendarDays().firstDay }).map((_, i) => <div key={i} />)}
-                                            {Array.from({ length: getCalendarDays().daysInMonth }).map((_, i) => {
-                                                const day = i + 1;
-                                                const checkKey = `${getCalendarDays().year}-${String(getCalendarDays().month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                                const isDone = history[checkKey]?.includes(selectedSummaryGoal);
-                                                return <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-xs font-bold ${isDone ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>{day}</div>;
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+                            <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl relative"><h2 className="text-3xl font-black">{selectedSummaryGoal}</h2></div>
                         </div>
                     )}
 
                     {page === 'social' && (
-                        <div className="animate-fadeIn space-y-6">
-                            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
-                                <div>
-                                    <label className="text-[10px] font-black text-indigo-600 uppercase ml-1">Create Group</label>
-                                    <div className="flex gap-2 mt-1">
-                                        <input className="flex-1 bg-slate-50 px-4 py-3 rounded-2xl text-sm outline-none border border-transparent focus:border-indigo-200" placeholder="E.g. Gym Bros" value={groupInput} onChange={e => setGroupInput(e.target.value)} />
-                                        <button onClick={handleCreateGroup} className="bg-indigo-600 text-white px-6 rounded-2xl font-bold text-xs uppercase">Create</button>
-                                    </div>
-                                </div>
-                                <div className="pt-2 border-t border-slate-50">
-                                    <label className="text-[10px] font-black text-indigo-600 uppercase ml-1">Join Group</label>
-                                    <div className="flex gap-2 mt-1">
-                                        <input className="flex-1 bg-slate-50 px-4 py-3 rounded-2xl text-sm outline-none border border-transparent focus:border-indigo-200" placeholder="Enter 6-digit code" value={joinInput} onChange={e => setJoinInput(e.target.value)} />
-                                        <button onClick={handleJoinGroup} className="border-2 border-indigo-600 text-indigo-600 px-6 rounded-2xl font-bold text-xs uppercase">Join</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="space-y-3">
-                                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-2">Your Communities</h3>
-                                {groups.length === 0 ? (
-                                    <div className="text-center py-10 text-slate-300 text-sm italic">No groups yet. Create one above!</div>
-                                ) : (
-                                    groups.map(g => (
-                                        <div key={g.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex justify-between items-center">
-                                            <div>
-                                                <p className="font-bold text-slate-700">{g.name}</p>
-                                                <p className="text-[10px] font-black text-indigo-400 uppercase">Code: {g.id}</p>
-                                            </div>
-                                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] font-bold text-indigo-600">
-                                                {g.members.length}
+                        <div className="animate-view space-y-6">
+                            {!activeGroupId ? (
+                                <>
+                                    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
+                                        <div>
+                                            <label className="text-[10px] font-black text-indigo-600 uppercase ml-1">Create Community</label>
+                                            <div className="flex gap-2 mt-1">
+                                                <input className="flex-1 bg-slate-50 px-4 py-3 rounded-2xl text-sm outline-none" placeholder="E.g. Yoga Fam" value={groupInput} onChange={e => setGroupInput(e.target.value)} />
+                                                <button onClick={handleCreateGroup} className="bg-indigo-600 text-white px-6 rounded-2xl font-bold text-xs">CREATE</button>
                                             </div>
                                         </div>
-                                    ))
-                                )}
-                            </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-2">My Groups</h3>
+                                        {groups.map(g => (
+                                            <div key={g.id} onClick={() => setActiveGroupId(g.id)} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex justify-between items-center cursor-pointer active:scale-95 transition-transform">
+                                                <div>
+                                                    <p className="font-bold text-slate-700">{g.name}</p>
+                                                    <p className="text-[10px] font-black text-indigo-400 uppercase">Code: {g.id}</p>
+                                                </div>
+                                                <div className="text-slate-300 font-bold">→</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="space-y-4 animate-view">
+                                    <div className="flex items-center gap-4 mb-2">
+                                        <button onClick={() => setActiveGroupId(null)} className="bg-white w-10 h-10 rounded-full shadow-sm border border-slate-100 flex items-center justify-center font-bold text-indigo-600">←</button>
+                                        <h2 className="text-xl font-black text-slate-800">{activeGroup?.name}</h2>
+                                    </div>
+                                    
+                                    <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
+                                        <div className="bg-slate-50 p-4 border-b border-slate-100 flex justify-between">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Live Activity Feed</span>
+                                            <span className="text-[10px] font-bold text-indigo-500 uppercase">Today</span>
+                                        </div>
+                                        <div className="p-2 space-y-1">
+                                            {activeGroup?.members.map((m, idx) => (
+                                                <div key={idx} className="flex items-center justify-between p-4 rounded-3xl hover:bg-slate-50 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${idx === 0 ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
+                                                            {m.email[0].toUpperCase()}
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-sm font-bold text-slate-700">{m.email === session.user.email ? "You" : m.email.split('@')[0]}</p>
+                                                            <p className="text-[10px] text-slate-400 font-bold uppercase">{idx === 0 ? history[dateKey]?.length || 0 : m.habitsDone} Done</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        {Array.from({ length: 3 }).map((_, i) => (
+                                                            <div key={i} className={`w-2 h-2 rounded-full ${(idx === 0 ? i < (history[dateKey]?.length || 0) : i < m.habitsDone) ? 'bg-green-500 shadow-sm' : 'bg-slate-200'}`}></div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <p className="text-center text-[10px] text-slate-300 font-bold uppercase tracking-tighter">Group Member data updates on sync</p>
+                                </div>
+                            )}
                         </div>
                     )}
 
                     <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
                         <div className="bg-white/95 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
                             {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>
+                                <button key={p} onClick={() => { setPage(p); setActiveGroupId(null); }} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>
                                     {p.toUpperCase()}
                                 </button>
                             ))}
