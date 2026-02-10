@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Multiplayer</title>
+    <title>Journally - Swipe & Social</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -34,9 +34,12 @@
             const [logs, setLogs] = useState([]);
             const [archivedGoals, setArchivedGoals] = useState([]);
             const [groups, setGroups] = useState([]);
-            const [selectedGoalFilter, setSelectedGoalFilter] = useState('all');
-            const [showArchive, setShowArchive] = useState(false);
             const [status, setStatus] = useState('');
+            const [showArchive, setShowArchive] = useState(false);
+            
+            // Swipe States
+            const [swipedId, setSwipedId] = useState(null);
+            const [touchStart, setTouchStart] = useState(0);
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
@@ -50,18 +53,31 @@
             async function refreshData() {
                 if (!session) return;
                 setStatus('Syncing...');
+                
                 const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).is('deleted_at', null);
                 setGoals(g || []);
+                
                 const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).not('deleted_at', 'is', null);
                 setArchivedGoals(arc || []);
+                
                 const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', session.user.id);
                 setLogs(l || []);
+                
                 const { data: m } = await supabaseClient.from('memberships').select('group_id, groups(*)').eq('user_id', session.user.id);
                 setGroups(m?.map(item => item.groups) || []);
+                
                 setStatus('');
             }
 
-            // --- GOAL ACTIONS ---
+            // --- GESTURE HELPERS ---
+            const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
+            const handleTouchMove = (e, id) => {
+                const touchEnd = e.targetTouches[0].clientX;
+                if (touchStart - touchEnd > 70) setSwipedId(id); // Swipe Left
+                if (touchEnd - touchStart > 70) setSwipedId(null); // Swipe Right
+            };
+
+            // --- DATABASE ACTIONS ---
             const handleAddGoal = async () => {
                 const name = prompt("Enter habit name:");
                 if (!name) return;
@@ -91,42 +107,10 @@
                 refreshData();
             };
 
-            // --- GROUP ACTIONS ---
-            const handleCreateGroup = async () => {
-                const name = prompt("Group Name:");
-                if (!name) return;
-                const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-                const { data: newGroup } = await supabaseClient.from('groups').insert([{ name, invite_code: code, created_by: session.user.id }]).select().single();
-                if (newGroup) await supabaseClient.from('memberships').insert([{ group_id: newGroup.id, user_id: session.user.id }]);
-                refreshData();
-            };
-
-            const handleJoinGroup = async () => {
-                const code = prompt("Enter 6-digit Invite Code:");
-                if (!code) return;
-                const { data: group } = await supabaseClient.from('groups').select('*').eq('invite_code', code.toUpperCase()).single();
-                if (group) {
-                    await supabaseClient.from('memberships').insert([{ group_id: group.id, user_id: session.user.id }]);
-                    refreshData();
-                } else {
-                    alert("Group not found!");
-                }
-            };
-
-            // --- RENDER HELPERS ---
-            const getHeatmapColor = (dayDate) => {
-                const dayStr = dayDate.toISOString().split('T')[0];
-                const dayLogs = logs.filter(l => l.logged_date === dayStr);
-                const activeOnDay = goals.filter(g => new Date(g.created_at) <= dayDate).length;
-                if (activeOnDay === 0) return 'bg-slate-100';
-                const ratio = dayLogs.length / activeOnDay;
-                return ratio === 1 ? 'bg-green-500' : ratio > 0 ? 'bg-yellow-400' : 'bg-slate-200';
-            };
-
-            if (!session) return <div className="p-20 text-center font-bold">Connecting...</div>;
+            if (!session) return <div className="p-20 text-center font-bold">Connecting to Journally...</div>;
 
             return (
-                <div className="max-w-md mx-auto p-6 pb-40">
+                <div className="max-w-md mx-auto p-6 pb-40 min-h-screen" onClick={() => setSwipedId(null)}>
                     <header className="flex justify-between items-center mb-8">
                         <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{status || 'Synced'}</div>
@@ -134,31 +118,63 @@
 
                     {page === 'daily' && (
                         <div className="animate-view space-y-4">
-                            <div className="bg-white p-4 rounded-3xl border border-slate-100 flex justify-between items-center mb-6">
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2">←</button>
-                                <span className="font-bold">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2">→</button>
+                            {/* Date Navigation */}
+                            <div className="bg-white p-4 rounded-3xl border border-slate-100 flex justify-between items-center mb-6" onClick={(e) => e.stopPropagation()}>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold">←</button>
+                                <span className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold">→</button>
                             </div>
 
+                            {/* Habit List with Swipe */}
                             {goals.map(g => (
-                                <div key={g.id} className="group relative flex items-center gap-2">
-                                    <div onClick={() => toggleLog(g.id)} className={`flex-1 p-6 rounded-[2rem] flex justify-between items-center transition-all cursor-pointer ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'bg-indigo-600 text-white' : 'bg-white border-2 border-slate-100'}`}>
-                                        <span className="font-bold">{g.name}</span>
-                                        {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && <span>✓</span>}
+                                <div key={g.id} className="relative overflow-hidden rounded-[2rem]" onClick={(e) => e.stopPropagation()}>
+                                    
+                                    {/* Hidden Action Buttons */}
+                                    <div className="absolute inset-0 flex justify-end items-center pr-4 gap-2 bg-slate-100">
+                                        <button 
+                                            onClick={() => { handleEditGoal(g.id, g.name); setSwipedId(null); }}
+                                            className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm"
+                                        >
+                                            ✎
+                                        </button>
+                                        <button 
+                                            onClick={() => { deleteGoal(g.id); setSwipedId(null); }}
+                                            className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center"
+                                        >
+                                            ✕
+                                        </button>
                                     </div>
-                                    <button onClick={() => handleEditGoal(g.id, g.name)} className="p-4 bg-slate-100 rounded-2xl text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">✎</button>
-                                    <button onClick={() => deleteGoal(g.id)} className="p-4 bg-red-50 rounded-2xl text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+
+                                    {/* Visible Goal Card */}
+                                    <div 
+                                        onTouchStart={handleTouchStart}
+                                        onTouchMove={(e) => handleTouchMove(e, g.id)}
+                                        style={{ transform: swipedId === g.id ? 'translateX(-130px)' : 'translateX(0)' }}
+                                        className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out cursor-pointer"
+                                        onClick={() => {
+                                            if (swipedId === g.id) setSwipedId(null);
+                                            else toggleLog(g.id);
+                                        }}
+                                    >
+                                        <span className={`font-bold ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-700'}`}>
+                                            {g.name}
+                                        </span>
+                                        {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && (
+                                            <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md">✓</div>
+                                        )}
+                                    </div>
                                 </div>
                             ))}
                             
-                            <button onClick={handleAddGoal} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold">+ New Habit</button>
+                            <button onClick={handleAddGoal} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-white transition-all">+ New Habit</button>
                             
+                            {/* Archive Section */}
                             <div className="pt-10 text-center">
                                 <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
                                     {showArchive ? 'Hide Archive' : 'View Archived Habits'}
                                 </button>
                                 {showArchive && archivedGoals.map(ag => (
-                                    <div key={ag.id} className="mt-2 p-4 bg-slate-50 rounded-2xl flex justify-between items-center">
+                                    <div key={ag.id} className="mt-2 p-4 bg-slate-50 rounded-2xl flex justify-between items-center opacity-60">
                                         <span className="text-sm font-bold text-slate-400">{ag.name}</span>
                                         <button onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} className="text-[10px] text-indigo-500 font-bold uppercase">Restore</button>
                                     </div>
@@ -167,31 +183,11 @@
                         </div>
                     )}
 
-                    {page === 'social' && (
-                        <div className="animate-view space-y-6">
-                            <div className="flex gap-2">
-                                <button onClick={handleCreateGroup} className="flex-1 p-4 bg-indigo-600 text-white rounded-2xl font-bold">Create Group</button>
-                                <button onClick={handleJoinGroup} className="flex-1 p-4 bg-white border-2 border-slate-100 rounded-2xl font-bold text-slate-600">Join Group</button>
-                            </div>
-                            <div className="space-y-3">
-                                {groups.map(group => (
-                                    <div key={group.id} className="bg-white p-6 rounded-3xl border border-slate-100 flex justify-between items-center shadow-sm">
-                                        <div>
-                                            <p className="font-black text-slate-800">{group.name}</p>
-                                            <p className="text-[10px] font-mono text-slate-400 uppercase tracking-tighter">Code: {group.invite_code}</p>
-                                        </div>
-                                        <button onClick={async () => { if(confirm("Leave group?")) { await supabaseClient.from('memberships').delete().eq('group_id', group.id).eq('user_id', session.user.id); refreshData(); } }} className="text-xs font-bold text-red-400">Leave</button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Navigation remains same... */}
-                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center">
-                        <div className="bg-white border border-slate-200 p-2 rounded-full shadow-xl flex gap-1">
+                    {/* Navigation Bar */}
+                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
                             {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
+                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
                                     {p.toUpperCase()}
                                 </button>
                             ))}
