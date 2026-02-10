@@ -17,8 +17,9 @@
         const { useState, useEffect } = React;
 
         // --- SECURE CONFIGURATION ---
-        const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; //
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; //
+        // Ensure these match your actual Project Settings
+        const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         function App() {
@@ -28,12 +29,10 @@
             const [loading, setLoading] = useState(true);
             const [goals, setGoals] = useState([]);
             const [history, setHistory] = useState({});
-            const [currentDate, setCurrentDate] = useState(new Date());
-
-            const dateKey = currentDate.toISOString().split('T')[0];
+            const [status, setStatus] = useState('');
 
             useEffect(() => {
-                // Listen for secure session changes
+                // Persistent session handling
                 supabaseClient.auth.getSession().then(({ data: { session } }) => {
                     setSession(session);
                     if (session) loadUserData(session.user.id);
@@ -43,16 +42,41 @@
                 const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
                     setSession(session);
                     if (session) loadUserData(session.user.id);
+                    else setLoading(false);
                 });
 
                 return () => subscription.unsubscribe();
             }, []);
 
+            async function loadUserData(userId) {
+                setStatus('Syncing...');
+                const { data, error } = await supabaseClient
+                    .from('journally_data')
+                    .select('content')
+                    .eq('user_id', userId)
+                    .single();
+                
+                // FIX: If no row exists (Error 116), create a new one for this user
+                if (error && error.code === 'PGRST116') {
+                    const initialData = { 
+                        user_id: userId, 
+                        content: { goals: [], history: {} } 
+                    };
+                    await supabaseClient.from('journally_data').insert(initialData);
+                    setGoals([]);
+                    setHistory({});
+                } else if (data) {
+                    setGoals(data.content.goals || []);
+                    setHistory(data.content.history || {});
+                }
+                setStatus('');
+            }
+
             async function handleSignUp(e) {
                 e.preventDefault();
                 const { error } = await supabaseClient.auth.signUp({ email, password });
                 if (error) alert(error.message);
-                else alert("Check your email for a confirmation link!");
+                else alert("Account created! Verify your email if confirmation is enabled.");
             }
 
             async function handleLogin(e) {
@@ -61,36 +85,13 @@
                 if (error) alert(error.message);
             }
 
-            async function loadUserData(userId) {
-                const { data } = await supabaseClient
-                    .from('journally_data')
-                    .select('content')
-                    .eq('user_id', userId) //
-                    .single();
-                
-                if (data) {
-                    setGoals(data.content.goals || []);
-                    setHistory(data.content.history || {});
-                }
-            }
-
-            async function syncWithCloud(updatedGoals = goals, updatedHistory = history) {
-                if (!session) return;
-                await supabaseClient
-                    .from('journally_data')
-                    .upsert({ 
-                        user_id: session.user.id, //
-                        content: { goals: updatedGoals, history: updatedHistory } 
-                    });
-            }
-
             if (loading) return <div className="flex justify-center mt-20 font-bold text-indigo-600">Securely Loading...</div>;
 
             if (!session) {
                 return (
                     <div className="min-h-screen flex items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm border border-slate-200">
-                            <h1 className="text-3xl font-black text-indigo-600 text-center mb-6">Secure Login</h1>
+                            <h1 className="text-3xl font-black text-indigo-600 text-center mb-6 text-indigo-600">Secure Login</h1>
                             <div className="space-y-4">
                                 <input className="w-full p-4 bg-slate-50 border rounded-2xl outline-none" 
                                        placeholder="Email" onChange={e => setEmail(e.target.value)} />
@@ -108,12 +109,17 @@
                 <div className="min-h-screen p-8 flex flex-col items-center">
                     <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
                         <div className="bg-indigo-600 p-8 text-white flex justify-between items-center">
-                            <h2 className="font-bold uppercase tracking-widest text-xs">Logged in as {session.user.email}</h2>
-                            <button onClick={() => supabaseClient.auth.signOut()} className="bg-red-500 px-3 py-1 rounded-lg text-[10px] font-bold">Logout</button>
+                            <div>
+                                <h2 className="font-bold uppercase tracking-widest text-[10px] opacity-80 text-white">Cloud Status: {status || 'Synced'}</h2>
+                                <p className="text-sm font-bold truncate max-w-[180px] text-white">{session.user.email}</p>
+                            </div>
+                            <button onClick={() => supabaseClient.auth.signOut()} className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded-xl text-xs font-bold transition">Logout</button>
                         </div>
-                        <div className="p-8">
-                             <p className="text-slate-500 text-center italic">Your high-security dashboard is ready.</p>
-                             {/* Add your Habit UI components here */}
+                        <div className="p-8 text-center">
+                             <p className="text-slate-500 italic mb-4">Your high-security dashboard is ready.</p>
+                             <div className="p-4 bg-indigo-50 rounded-2xl text-indigo-600 font-medium">
+                                No habits found yet. Add your first goal below!
+                             </div>
                         </div>
                     </div>
                 </div>
