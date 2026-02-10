@@ -35,6 +35,8 @@
             const [viewDate, setViewDate] = useState(new Date());
             const [status, setStatus] = useState('');
             const [newGoal, setNewGoal] = useState('');
+            const [editingIndex, setEditingIndex] = useState(null);
+            const [editValue, setEditValue] = useState('');
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
@@ -71,6 +73,7 @@
             }
 
             const toggleGoal = (goal) => {
+                if (editingIndex !== null) return; // Prevent toggle while editing
                 const dayHistory = history[dateKey] || [];
                 const updatedDay = dayHistory.includes(goal) ? dayHistory.filter(g => g !== goal) : [...dayHistory, goal];
                 const updatedHistory = { ...history, [dateKey]: updatedDay };
@@ -87,13 +90,47 @@
                 sync(updated, history);
             };
 
-            // Calendar & Stats Helpers
+            const deleteGoal = (index) => {
+                const goalToDelete = goals[index];
+                const updatedGoals = goals.filter((_, i) => i !== index);
+                
+                // Also clean up history for that goal to save space
+                const updatedHistory = { ...history };
+                Object.keys(updatedHistory).forEach(date => {
+                    updatedHistory[date] = updatedHistory[date].filter(g => g !== goalToDelete);
+                });
+
+                setGoals(updatedGoals);
+                setHistory(updatedHistory);
+                setEditingIndex(null);
+                if (selectedGoal === goalToDelete) setSelectedGoal(updatedGoals[0] || null);
+                sync(updatedGoals, updatedHistory);
+            };
+
+            const saveEdit = (index) => {
+                if (!editValue.trim()) return;
+                const oldGoal = goals[index];
+                const newGoalName = editValue.trim();
+                const updatedGoals = [...goals];
+                updatedGoals[index] = newGoalName;
+
+                // Update history references from old name to new name
+                const updatedHistory = { ...history };
+                Object.keys(updatedHistory).forEach(date => {
+                    updatedHistory[date] = updatedHistory[date].map(g => g === oldGoal ? newGoalName : g);
+                });
+
+                setGoals(updatedGoals);
+                setHistory(updatedHistory);
+                setEditingIndex(null);
+                sync(updatedGoals, updatedHistory);
+            };
+
             const calendarData = useMemo(() => {
                 const year = viewDate.getFullYear();
                 const month = viewDate.getMonth();
                 const firstDay = new Date(year, month, 1).getDay();
                 const daysInMonth = new Date(year, month + 1, 0).getDate();
-                
                 let completedCount = 0;
                 if (selectedGoal) {
                     for (let d = 1; d <= daysInMonth; d++) {
@@ -102,7 +139,6 @@
                     }
                 }
                 const percentage = daysInMonth > 0 ? Math.round((completedCount / daysInMonth) * 100) : 0;
-
                 return { firstDay, daysInMonth, percentage, completedCount };
             }, [viewDate, history, selectedGoal]);
 
@@ -125,11 +161,23 @@
 
                             <div className="space-y-3">
                                 {goals.map((g, i) => (
-                                    <div key={i} onClick={() => toggleGoal(g)} className={`p-5 rounded-3xl flex justify-between items-center transition-all border-2 active:scale-95 ${history[dateKey]?.includes(g) ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400'}`}>
-                                        <span className="font-bold">{g}</span>
-                                        <div className="flex items-center gap-3">
-                                            {history[dateKey]?.includes(g) && <span className="text-xl font-bold">✓</span>}
-                                        </div>
+                                    <div key={i} className="relative group">
+                                        {editingIndex === i ? (
+                                            <div className="p-3 bg-white border-2 border-indigo-500 rounded-3xl flex gap-2 animate-fadeIn">
+                                                <input autoFocus className="flex-1 px-3 outline-none font-bold" value={editValue} onChange={e => setEditValue(e.target.value)} />
+                                                <button onClick={() => saveEdit(i)} className="bg-green-500 text-white px-3 py-1 rounded-xl text-xs font-bold text-white">Save</button>
+                                                <button onClick={() => deleteGoal(i)} className="bg-red-500 text-white px-3 py-1 rounded-xl text-xs font-bold text-white">Del</button>
+                                                <button onClick={() => setEditingIndex(null)} className="text-slate-400 text-xs px-2">✕</button>
+                                            </div>
+                                        ) : (
+                                            <div onClick={() => toggleGoal(g)} className={`p-5 rounded-3xl flex justify-between items-center transition-all border-2 active:scale-95 cursor-pointer ${history[dateKey]?.includes(g) ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400'}`}>
+                                                <span className="font-bold">{g}</span>
+                                                <div className="flex items-center gap-3">
+                                                    <button onClick={(e) => { e.stopPropagation(); setEditingIndex(i); setEditValue(g); }} className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-black/5 rounded-lg text-[10px] font-bold uppercase tracking-tighter">Edit</button>
+                                                    {history[dateKey]?.includes(g) && <span className="text-xl font-bold">✓</span>}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -137,7 +185,6 @@
                     ) : (
                         <div className="animate-fadeIn">
                             <h2 className="text-xl font-bold mb-4 text-slate-800">Monthly Insights</h2>
-                            
                             <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4 mb-6 px-1">
                                 {goals.map((g, i) => (
                                     <button key={i} onClick={() => setSelectedGoal(g)} className={`flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-[10px] font-black border-2 transition-all ${selectedGoal === g ? 'bg-indigo-600 border-indigo-600 text-white scale-110 shadow-xl' : 'bg-white border-slate-200 text-slate-400'}`}>
@@ -148,7 +195,6 @@
 
                             {selectedGoal && (
                                 <div className="space-y-4">
-                                    {/* Percentage Card */}
                                     <div className="bg-indigo-600 p-6 rounded-[2.5rem] text-white shadow-xl flex items-center justify-between overflow-hidden relative">
                                         <div className="z-10">
                                             <p className="text-[10px] uppercase font-bold opacity-80 tracking-widest">Consistency</p>
@@ -163,8 +209,6 @@
                                             <span className="absolute text-sm font-black">{calendarData.percentage}%</span>
                                         </div>
                                     </div>
-
-                                    {/* Calendar Card */}
                                     <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
                                         <div className="grid grid-cols-7 gap-2 text-center">
                                             {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-slate-300 mb-2">{d}</div>)}
@@ -186,7 +230,6 @@
                         </div>
                     )}
 
-                    {/* Navigation Bar */}
                     <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
                         <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-2 pointer-events-auto">
                             <button onClick={() => setPage('daily')} className={`px-8 py-3 rounded-full font-bold transition-all ${page === 'daily' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>Daily</button>
@@ -194,7 +237,6 @@
                         </div>
                     </div>
 
-                    {/* Simple Add Goal (Daily Page) */}
                     {page === 'daily' && (
                         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 w-full max-w-[280px]">
                             <div className="flex gap-2 bg-white p-2 rounded-2xl shadow-xl border border-slate-100">
