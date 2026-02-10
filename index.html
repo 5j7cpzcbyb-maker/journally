@@ -3,24 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Full Management</title>
+    <title>Journally - Final Persistence Fix</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <style>
-        .no-scrollbar::-webkit-scrollbar { display: none; }
         .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-view { animation: slideIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans select-none overflow-x-hidden">
+<body class="bg-slate-50 text-slate-900 font-sans select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
 
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
@@ -34,47 +33,58 @@
             const [archived, setArchived] = useState([]);
             const [logs, setLogs] = useState([]);
             const [viewDate, setViewDate] = useState(new Date());
-            const [selectedHabitId, setSelectedHabitId] = useState('all');
             const [swipedId, setSwipedId] = useState(null);
             const [showArchive, setShowArchive] = useState(false);
+            const [selectedHabitId, setSelectedHabitId] = useState('all');
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
-            const refreshData = async (user) => {
-                const u = user || session?.user;
-                if (!u) return;
-                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', u.id).is('deleted_at', null).order('created_at', { ascending: true });
-                const { data: a } = await supabaseClient.from('goals').select('*').eq('user_id', u.id).not('deleted_at', 'is', null).order('deleted_at', { ascending: false });
-                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', u.id);
+            // --- REFRESH DATA (Updated to handle direct user passing) ---
+            const refreshData = async (userObj) => {
+                const currentUser = userObj || session?.user;
+                if (!currentUser) return;
+
+                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', currentUser.id).is('deleted_at', null).order('created_at', { ascending: true });
+                const { data: a } = await supabaseClient.from('goals').select('*').eq('user_id', currentUser.id).not('deleted_at', 'is', null).order('deleted_at', { ascending: false });
+                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', currentUser.id);
+                
                 setGoals(g || []);
                 setArchived(a || []);
                 setLogs(l || []);
             };
 
+            // --- THE FIX: Sequential initialization ---
             useEffect(() => {
-                supabaseClient.auth.getSession().then(({ data: { session: s } }) => {
-                    if (s) { setSession(s); refreshData(s).then(() => setLoading(false)); }
-                    else setLoading(false);
-                });
+                const initialize = async () => {
+                    const { data: { session: s } } = await supabaseClient.auth.getSession();
+                    if (s) {
+                        setSession(s);
+                        // We await the data before we turn off the loading screen
+                        await refreshData(s);
+                    }
+                    setLoading(false);
+                };
+                initialize();
             }, []);
 
-            // --- Handlers ---
-            const handleArchive = async (id) => {
-                await supabaseClient.from('goals').update({ deleted_at: new Date().toISOString() }).eq('id', id);
-                setSwipedId(null);
-                refreshData();
-            };
+            // Re-sync when the date changes
+            useEffect(() => {
+                if (session) refreshData();
+            }, [dateKey]);
 
-            const handleEdit = async (id, oldName) => {
-                const name = prompt("Edit habit name:", oldName);
-                if (name && name !== oldName) {
-                    await supabaseClient.from('goals').update({ name }).eq('id', id);
+            // --- ACTIONS ---
+            const toggleLog = async (goalId) => {
+                const isDone = logs.some(l => l.goal_id === goalId && l.logged_date === dateKey);
+                if (isDone) {
+                    const log = logs.find(l => l.goal_id === goalId && l.logged_date === dateKey);
+                    await supabaseClient.from('logs').delete().eq('id', log.id);
+                } else {
+                    await supabaseClient.from('logs').insert([{ goal_id: goalId, user_id: session.user.id, logged_date: dateKey }]);
                 }
-                setSwipedId(null);
                 refreshData();
             };
 
-            // --- Calendar Logic ---
+            // Calendar Logic
             const calendarDays = useMemo(() => {
                 const year = viewDate.getFullYear();
                 const month = viewDate.getMonth();
@@ -86,14 +96,22 @@
                 return days;
             }, [viewDate]);
 
-            if (loading) return <div className="h-screen flex items-center justify-center font-black text-indigo-600">SYNCING...</div>;
+            if (loading) return (
+                <div className="h-screen flex items-center justify-center bg-slate-50">
+                    <div className="text-center">
+                        <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Restoring Progress...</p>
+                    </div>
+                </div>
+            );
 
             return (
                 <div className="max-w-md mx-auto p-6 pb-40 min-h-screen" onClick={() => setSwipedId(null)}>
                     {activePage === 'daily' ? (
-                        <div className="animate-view">
+                        <div className="fade-in">
                             <header className="mb-8">
                                 <h1 className="text-3xl font-black italic text-indigo-600 leading-none">Daily</h1>
+                                <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">{viewDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}</p>
                             </header>
 
                             <div className="space-y-4">
@@ -102,31 +120,26 @@
                                     return (
                                         <div key={g.id} className="relative overflow-hidden rounded-[2rem]">
                                             <div className="absolute inset-0 flex justify-end items-center px-4 gap-2 bg-slate-100">
-                                                <button onClick={(e) => { e.stopPropagation(); handleEdit(g.id, g.name); }} className="h-10 px-4 bg-white text-indigo-600 font-bold rounded-xl text-[10px] uppercase shadow-sm">Edit</button>
-                                                <button onClick={(e) => { e.stopPropagation(); handleArchive(g.id); }} className="h-10 px-4 bg-red-500 text-white font-bold rounded-xl text-[10px] uppercase shadow-sm">Archive</button>
+                                                <button onClick={(e) => { e.stopPropagation(); 
+                                                    const n = prompt("Rename:", g.name);
+                                                    if(n) supabaseClient.from('goals').update({name: n}).eq('id', g.id).then(() => refreshData());
+                                                }} className="h-10 px-4 bg-white text-indigo-600 font-bold rounded-xl text-[10px] uppercase shadow-sm">Edit</button>
+                                                <button onClick={(e) => { e.stopPropagation(); 
+                                                    supabaseClient.from('goals').update({deleted_at: new Date().toISOString()}).eq('id', g.id).then(() => refreshData());
+                                                }} className="h-10 px-4 bg-red-500 text-white font-bold rounded-xl text-[10px] uppercase shadow-sm">Archive</button>
                                             </div>
                                             <div 
                                                 style={{ transform: swipedId === g.id ? 'translateX(-150px)' : 'translateX(0)' }}
-                                                className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out"
-                                                onClick={async (e) => {
-                                                    e.stopPropagation();
-                                                    if (swipedId === g.id) return setSwipedId(null);
-                                                    if (isDone) {
-                                                        const log = logs.find(l => l.goal_id === g.id && l.logged_date === dateKey);
-                                                        await supabaseClient.from('logs').delete().eq('id', log.id);
-                                                    } else {
-                                                        await supabaseClient.from('logs').insert([{ goal_id: g.id, user_id: session.user.id, logged_date: dateKey }]);
-                                                    }
-                                                    refreshData();
-                                                }}
-                                                onTouchStart={(e) => { this.tX = e.touches[0].clientX; }}
+                                                className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out cursor-pointer"
+                                                onClick={() => swipedId === g.id ? setSwipedId(null) : toggleLog(g.id)}
+                                                onTouchStart={(e) => this.tX = e.touches[0].clientX}
                                                 onTouchMove={(e) => {
                                                     const diff = this.tX - e.touches[0].clientX;
                                                     if (diff > 50) setSwipedId(g.id);
                                                     if (diff < -50) setSwipedId(null);
                                                 }}
                                             >
-                                                <span className={`font-bold ${isDone ? 'text-indigo-600 line-through' : 'text-slate-700'}`}>{g.name}</span>
+                                                <span className={`font-bold ${isDone ? 'text-indigo-400 line-through' : 'text-slate-700'}`}>{g.name}</span>
                                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isDone ? 'bg-indigo-600 text-white' : 'bg-slate-50 border border-slate-100'}`}>
                                                     {isDone && '✓'}
                                                 </div>
@@ -134,43 +147,39 @@
                                         </div>
                                     );
                                 })}
-
                                 <button onClick={async () => {
-                                    const name = prompt("New Habit:");
-                                    if(name) { await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]); refreshData(); }
-                                }} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-300 font-bold hover:text-indigo-400 transition-all">+ Add Habit</button>
+                                    const n = prompt("New Habit:");
+                                    if(n) await supabaseClient.from('goals').insert([{name: n, user_id: session.user.id}]);
+                                    refreshData();
+                                }} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-300 font-bold uppercase text-[10px] tracking-widest">+ Add Habit</button>
                             </div>
 
-                            {/* Archive Drawer */}
+                            {/* Archive Section */}
                             <div className="mt-12 text-center">
-                                <button onClick={() => setShowArchive(!showArchive)} className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{showArchive ? 'Hide' : 'Show'} Archive ({archived.length})</button>
+                                <button onClick={() => setShowArchive(!showArchive)} className="text-[9px] font-black text-slate-300 uppercase tracking-widest underline underline-offset-4">
+                                    {showArchive ? 'Hide Archive' : `Manage Archive (${archived.length})`}
+                                </button>
                                 {showArchive && archived.map(ag => (
-                                    <div key={ag.id} className="mt-2 p-4 bg-slate-50 rounded-2xl flex justify-between items-center border border-slate-100 animate-view">
+                                    <div key={ag.id} className="mt-3 p-4 bg-white rounded-2xl flex justify-between items-center border border-slate-100 fade-in">
                                         <span className="text-xs font-bold text-slate-400 line-through">{ag.name}</span>
                                         <div className="flex gap-4">
-                                            <button onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} className="text-[9px] font-black text-indigo-500 uppercase">Restore</button>
-                                            <button onClick={async () => { if(confirm("Purge?")) { await supabaseClient.from('goals').delete().eq('id', ag.id); refreshData(); }}} className="text-[9px] font-black text-red-400 uppercase">Purge</button>
+                                            <button onClick={() => supabaseClient.from('goals').update({deleted_at: null}).eq('id', ag.id).then(() => refreshData())} className="text-[9px] font-black text-indigo-500 uppercase">Restore</button>
+                                            <button onClick={() => { if(confirm("Purge?")) supabaseClient.from('goals').delete().eq('id', ag.id).then(() => refreshData()) }} className="text-[9px] font-black text-red-400 uppercase">Purge</button>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     ) : (
-                        <div className="animate-view">
+                        <div className="fade-in">
                             <header className="mb-6">
                                 <h1 className="text-3xl font-black italic text-indigo-600">Summary</h1>
                             </header>
-
-                            <select 
-                                value={selectedHabitId}
-                                onChange={(e) => setSelectedHabitId(e.target.value)}
-                                className="w-full p-4 mb-6 bg-white border-2 border-slate-100 rounded-2xl font-bold text-slate-700"
-                            >
+                            <select value={selectedHabitId} onChange={(e) => setSelectedHabitId(e.target.value)} className="w-full p-4 mb-6 bg-white border-2 border-slate-100 rounded-2xl font-bold text-slate-700 outline-none">
                                 <option value="all">All Habits</option>
                                 {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                             </select>
-
-                            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100">
                                 <div className="calendar-grid">
                                     {['S','M','T','W','T','F','S'].map(d => <span key={d} className="text-[10px] font-black text-slate-200 text-center">{d}</span>)}
                                     {calendarDays.map((day, i) => {
@@ -180,7 +189,7 @@
                                             ? logs.some(l => l.logged_date === dStr)
                                             : logs.some(l => l.logged_date === dStr && l.goal_id === selectedHabitId);
                                         return (
-                                            <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-[10px] font-bold ${isGreen ? 'bg-green-500 text-white shadow-md shadow-green-100' : 'bg-slate-50 text-slate-300'}`}>
+                                            <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-[10px] font-bold ${isGreen ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>
                                                 {day}
                                             </div>
                                         );
@@ -190,13 +199,11 @@
                         </div>
                     )}
 
+                    {/* Navigation */}
                     <nav className="fixed bottom-8 left-6 right-6 flex justify-center z-50">
                         <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-2 w-full max-w-[280px]">
-                            {['daily', 'summary'].map(p => (
-                                <button key={p} onClick={() => setActivePage(p)} className={`flex-1 py-4 rounded-full font-black text-[10px] tracking-widest transition-all ${activePage === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
-                                    {p.toUpperCase()}
-                                </button>
-                            ))}
+                            <button onClick={() => setActivePage('daily')} className={`flex-1 py-4 rounded-full font-black text-[10px] tracking-widest transition-all ${activePage === 'daily' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>DAILY</button>
+                            <button onClick={() => setActivePage('summary')} className={`flex-1 py-4 rounded-full font-black text-[10px] tracking-widest transition-all ${activePage === 'summary' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>SUMMARY</button>
                         </div>
                     </nav>
                 </div>
