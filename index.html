@@ -20,7 +20,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useCallback } = React;
 
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
@@ -37,39 +37,54 @@
             const [status, setStatus] = useState('');
             const [showArchive, setShowArchive] = useState(false);
             
-            // Swipe States
             const [swipedId, setSwipedId] = useState(null);
             const [touchStart, setTouchStart] = useState(0);
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
-            useEffect(() => {
-                supabaseClient.auth.getSession().then(({ data: { session } }) => {
-                    setSession(session);
-                    if (session) refreshData();
-                });
-            }, []);
-
-            async function refreshData() {
-                if (!session) return;
+            // --- DATA FETCHING (Now Wrapped for re-use) ---
+            const refreshData = useCallback(async (currentSession) => {
+                const user = currentSession?.user || session?.user;
+                if (!user) return;
+                
                 setStatus('Syncing...');
-                
-                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).is('deleted_at', null);
-                setGoals(g || []);
-                
-                const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).not('deleted_at', 'is', null);
-                setArchivedGoals(arc || []);
-                
-                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', session.user.id);
-                setLogs(l || []);
-                
-                const { data: m } = await supabaseClient.from('memberships').select('group_id, groups(*)').eq('user_id', session.user.id);
-                setGroups(m?.map(item => item.groups) || []);
-                
-                setStatus('');
-            }
+                try {
+                    const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).is('deleted_at', null);
+                    setGoals(g || []);
+                    
+                    const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).not('deleted_at', 'is', null);
+                    setArchivedGoals(arc || []);
+                    
+                    const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id);
+                    setLogs(l || []);
+                    
+                    const { data: m } = await supabaseClient.from('memberships').select('group_id, groups(*)').eq('user_id', user.id);
+                    setGroups(m?.map(item => item.groups) || []);
+                } catch (err) {
+                    console.error("Sync Error:", err);
+                } finally {
+                    setStatus('');
+                }
+            }, [session]);
 
-            // --- GESTURE HELPERS ---
+            // --- FIX: Proactive Session Listener ---
+            useEffect(() => {
+                // Check initial session
+                supabaseClient.auth.getSession().then(({ data: { session: initialSession } }) => {
+                    setSession(initialSession);
+                    if (initialSession) refreshData(initialSession);
+                });
+
+                // Listen for refreshes or auth changes
+                const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, currentSession) => {
+                    setSession(currentSession);
+                    if (currentSession) refreshData(currentSession);
+                });
+
+                return () => subscription.unsubscribe();
+            }, [refreshData]);
+
+            // --- GESTURES ---
             const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
             const handleTouchMove = (e, id) => {
                 const touchEnd = e.targetTouches[0].clientX;
@@ -98,10 +113,9 @@
             };
 
             const hardDeleteGoal = async (id) => {
-                if (!confirm("Permanently delete this habit and all its history? This cannot be undone.")) return;
+                if (!confirm("Permanently delete this habit? All history will be wiped.")) return;
                 setStatus('Removing...');
-                const { error } = await supabaseClient.from('goals').delete().eq('id', id);
-                if (error) alert("Error deleting: " + error.message);
+                await supabaseClient.from('goals').delete().eq('id', id);
                 refreshData();
             };
 
@@ -115,7 +129,7 @@
                 refreshData();
             };
 
-            if (!session) return <div className="p-20 text-center font-bold">Connecting to Journally...</div>;
+            if (!session) return <div className="p-20 text-center font-bold text-slate-400">Loading Session...</div>;
 
             return (
                 <div className="max-w-md mx-auto p-6 pb-40 min-h-screen" onClick={() => setSwipedId(null)}>
@@ -135,67 +149,52 @@
                             {goals.map(g => (
                                 <div key={g.id} className="relative overflow-hidden rounded-[2rem]" onClick={(e) => e.stopPropagation()}>
                                     <div className="absolute inset-0 flex justify-end items-center pr-4 gap-2 bg-slate-100">
-                                        <button 
-                                            onClick={() => { handleEditGoal(g.id, g.name); setSwipedId(null); }}
-                                            className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm"
-                                        >
-                                            ✎
-                                        </button>
-                                        <button 
-                                            onClick={() => { deleteGoal(g.id); setSwipedId(null); }}
-                                            className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center"
-                                        >
-                                            ✕
-                                        </button>
+                                        <button onClick={() => { handleEditGoal(g.id, g.name); setSwipedId(null); }} className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm">✎</button>
+                                        <button onClick={() => { deleteGoal(g.id); setSwipedId(null); }} className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center">✕</button>
                                     </div>
-
                                     <div 
-                                        onTouchStart={handleTouchStart}
-                                        onTouchMove={(e) => handleTouchMove(e, g.id)}
+                                        onTouchStart={handleTouchStart} onTouchMove={(e) => handleTouchMove(e, g.id)}
                                         style={{ transform: swipedId === g.id ? 'translateX(-130px)' : 'translateX(0)' }}
                                         className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out cursor-pointer"
-                                        onClick={() => {
-                                            if (swipedId === g.id) setSwipedId(null);
-                                            else toggleLog(g.id);
-                                        }}
+                                        onClick={() => swipedId === g.id ? setSwipedId(null) : toggleLog(g.id)}
                                     >
-                                        <span className={`font-bold ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-700'}`}>
-                                            {g.name}
-                                        </span>
-                                        {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && (
-                                            <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md">✓</div>
-                                        )}
+                                        <span className={`font-bold ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-700'}`}>{g.name}</span>
+                                        {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md">✓</div>}
                                     </div>
                                 </div>
                             ))}
-                            
                             <button onClick={handleAddGoal} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-white transition-all">+ New Habit</button>
                             
                             <div className="pt-10 text-center">
-                                <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
-                                    {showArchive ? 'Hide Archive' : 'View Archived Habits'}
-                                </button>
+                                <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{showArchive ? 'Hide Archive' : 'View Archived Habits'}</button>
                                 {showArchive && archivedGoals.map(ag => (
                                     <div key={ag.id} className="mt-2 p-4 bg-slate-100/50 rounded-2xl flex justify-between items-center animate-view">
-                                        <div className="flex flex-col items-start px-2">
-                                            <span className="text-sm font-bold text-slate-500">{ag.name}</span>
-                                        </div>
+                                        <span className="text-sm font-bold text-slate-500 px-2">{ag.name}</span>
                                         <div className="flex gap-4 items-center">
-                                            <button 
-                                                onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} 
-                                                className="text-[10px] text-indigo-500 font-bold uppercase tracking-widest"
-                                            >
-                                                Restore
-                                            </button>
-                                            <button 
-                                                onClick={() => hardDeleteGoal(ag.id)}
-                                                className="w-8 h-8 bg-red-50 text-red-400 rounded-full flex items-center justify-center text-[10px]"
-                                            >
-                                                ✕
-                                            </button>
+                                            <button onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} className="text-[10px] text-indigo-500 font-bold uppercase tracking-widest">Restore</button>
+                                            <button onClick={() => hardDeleteGoal(ag.id)} className="w-8 h-8 bg-red-50 text-red-400 rounded-full flex items-center justify-center text-[10px]">✕</button>
                                         </div>
                                     </div>
                                 ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {page === 'social' && (
+                        <div className="animate-view space-y-6">
+                            <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 text-center">
+                                <p className="text-indigo-600 font-bold">Multiplayer Mode</p>
+                                <p className="text-xs text-indigo-400 mt-1">Connect with friends to see progress</p>
+                            </div>
+                            {groups.length === 0 && <p className="text-center text-slate-400 text-sm mt-10">No groups joined yet.</p>}
+                        </div>
+                    )}
+
+                    {page === 'summary' && (
+                        <div className="animate-view space-y-4">
+                            <h2 className="font-bold text-slate-400 uppercase text-xs tracking-[0.2em] mb-4">Consistency Heatmap</h2>
+                            <div className="grid grid-cols-7 gap-2">
+                                {[...Array(28)].map((_, i) => <div key={i} className="aspect-square bg-white border border-slate-100 rounded-lg"></div>)}
                             </div>
                         </div>
                     )}
