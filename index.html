@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Swipe & Social</title>
+    <title>Journally - Full CRUD & Multiplayer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -73,8 +73,8 @@
             const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
             const handleTouchMove = (e, id) => {
                 const touchEnd = e.targetTouches[0].clientX;
-                if (touchStart - touchEnd > 70) setSwipedId(id); // Swipe Left
-                if (touchEnd - touchStart > 70) setSwipedId(null); // Swipe Right
+                if (touchStart - touchEnd > 70) setSwipedId(id); 
+                if (touchEnd - touchStart > 70) setSwipedId(null); 
             };
 
             // --- DATABASE ACTIONS ---
@@ -94,6 +94,14 @@
 
             const deleteGoal = async (id) => {
                 await supabaseClient.from('goals').update({ deleted_at: new Date().toISOString() }).eq('id', id);
+                refreshData();
+            };
+
+            const hardDeleteGoal = async (id) => {
+                if (!confirm("Permanently delete this habit and all its history? This cannot be undone.")) return;
+                setStatus('Removing...');
+                const { error } = await supabaseClient.from('goals').delete().eq('id', id);
+                if (error) alert("Error deleting: " + error.message);
                 refreshData();
             };
 
@@ -118,18 +126,14 @@
 
                     {page === 'daily' && (
                         <div className="animate-view space-y-4">
-                            {/* Date Navigation */}
                             <div className="bg-white p-4 rounded-3xl border border-slate-100 flex justify-between items-center mb-6" onClick={(e) => e.stopPropagation()}>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold">←</button>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
                                 <span className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold">→</button>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
                             </div>
 
-                            {/* Habit List with Swipe */}
                             {goals.map(g => (
                                 <div key={g.id} className="relative overflow-hidden rounded-[2rem]" onClick={(e) => e.stopPropagation()}>
-                                    
-                                    {/* Hidden Action Buttons */}
                                     <div className="absolute inset-0 flex justify-end items-center pr-4 gap-2 bg-slate-100">
                                         <button 
                                             onClick={() => { handleEditGoal(g.id, g.name); setSwipedId(null); }}
@@ -145,7 +149,6 @@
                                         </button>
                                     </div>
 
-                                    {/* Visible Goal Card */}
                                     <div 
                                         onTouchStart={handleTouchStart}
                                         onTouchMove={(e) => handleTouchMove(e, g.id)}
@@ -168,22 +171,35 @@
                             
                             <button onClick={handleAddGoal} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-white transition-all">+ New Habit</button>
                             
-                            {/* Archive Section */}
                             <div className="pt-10 text-center">
                                 <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
                                     {showArchive ? 'Hide Archive' : 'View Archived Habits'}
                                 </button>
                                 {showArchive && archivedGoals.map(ag => (
-                                    <div key={ag.id} className="mt-2 p-4 bg-slate-50 rounded-2xl flex justify-between items-center opacity-60">
-                                        <span className="text-sm font-bold text-slate-400">{ag.name}</span>
-                                        <button onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} className="text-[10px] text-indigo-500 font-bold uppercase">Restore</button>
+                                    <div key={ag.id} className="mt-2 p-4 bg-slate-100/50 rounded-2xl flex justify-between items-center animate-view">
+                                        <div className="flex flex-col items-start px-2">
+                                            <span className="text-sm font-bold text-slate-500">{ag.name}</span>
+                                        </div>
+                                        <div className="flex gap-4 items-center">
+                                            <button 
+                                                onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} 
+                                                className="text-[10px] text-indigo-500 font-bold uppercase tracking-widest"
+                                            >
+                                                Restore
+                                            </button>
+                                            <button 
+                                                onClick={() => hardDeleteGoal(ag.id)}
+                                                className="w-8 h-8 bg-red-50 text-red-400 rounded-full flex items-center justify-center text-[10px]"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     )}
 
-                    {/* Navigation Bar */}
                     <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none" onClick={(e) => e.stopPropagation()}>
                         <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
                             {['daily', 'summary', 'social'].map(p => (
