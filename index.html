@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Full Suite</title>
+    <title>Journally - Social Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com-react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
     </style>
 </head>
@@ -39,6 +39,11 @@
             const [selectedSummaryGoal, setSelectedSummaryGoal] = useState(null);
             const [status, setStatus] = useState('');
 
+            // NEW SOCIAL STATES
+            const [groups, setGroups] = useState([]);
+            const [groupInput, setGroupInput] = useState('');
+            const [joinInput, setJoinInput] = useState('');
+
             const dateKey = viewDate.toISOString().split('T')[0];
 
             useEffect(() => {
@@ -54,6 +59,7 @@
                 if (data) {
                     setGoals(data.content.goals || []);
                     setHistory(data.content.history || {});
+                    setGroups(data.content.groups || []);
                     if (data.content.goals?.length > 0) setSelectedSummaryGoal(data.content.goals[0]);
                 }
                 setStatus('');
@@ -63,11 +69,13 @@
                 if (!session) return;
                 const content = {
                     goals: updated.goals || goals,
-                    history: updated.history || history
+                    history: updated.history || history,
+                    groups: updated.groups || groups
                 };
                 await supabaseClient.from('journally_data').upsert({ user_id: session.user.id, content });
             }
 
+            // DAILY PAGE LOGIC
             const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
             const handleTouchEnd = (e, index, goalName) => {
                 const distance = touchStart - e.changedTouches[0].clientX;
@@ -84,13 +92,25 @@
                 sync({ history: updatedHistory });
             };
 
-            const confirmDelete = (index) => {
-                const updated = goals.filter((_, i) => i !== index);
-                setGoals(updated);
-                setDeletingIndex(null);
-                sync({ goals: updated });
+            // SOCIAL LOGIC
+            const handleCreateGroup = () => {
+                if (!groupInput.trim()) return;
+                const newId = Math.random().toString(36).substring(2, 8).toUpperCase();
+                const newGroup = { id: newId, name: groupInput, members: [session.user.email] };
+                const updatedGroups = [...groups, newGroup];
+                setGroups(updatedGroups);
+                setGroupInput('');
+                sync({ groups: updatedGroups });
             };
 
+            const handleJoinGroup = () => {
+                if (!joinInput.trim()) return;
+                alert(`Searching for Group: ${joinInput}...`);
+                // Placeholder for join logic
+                setJoinInput('');
+            };
+
+            // SUMMARY LOGIC
             const getCalendarDays = () => {
                 const year = viewDate.getFullYear();
                 const month = viewDate.getMonth();
@@ -105,18 +125,16 @@
                 <div className="max-w-md mx-auto p-6 pb-40">
                     <header className="flex justify-between items-center mb-6">
                         <h1 className="text-2xl font-black text-indigo-600 italic">Journally</h1>
-                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Live'}</span>
+                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Online'}</span>
                     </header>
 
                     {page === 'daily' && (
                         <div className="animate-fadeIn">
-                            {/* Restored Date Nav */}
                             <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
                                 <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
                                 <p className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
                                 <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
                             </div>
-
                             <div className="space-y-3">
                                 {goals.map((g, i) => (
                                     <div key={i} className="relative overflow-hidden rounded-3xl" onTouchStart={handleTouchStart} onTouchEnd={(e) => handleTouchEnd(e, i, g)}>
@@ -129,7 +147,7 @@
                                             <div className="bg-red-50 p-4 flex justify-between items-center">
                                                 <span className="text-red-600 font-bold text-sm pl-2">Delete?</span>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => confirmDelete(i)} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Yes</button>
+                                                    <button onClick={() => { const u = goals.filter((_, idx) => idx !== i); setGoals(u); setDeletingIndex(null); sync({goals: u}); }} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Yes</button>
                                                     <button onClick={() => setDeletingIndex(null)} className="bg-white text-slate-400 px-4 py-2 rounded-xl border font-bold text-xs">No</button>
                                                 </div>
                                             </div>
@@ -154,15 +172,11 @@
                                     </button>
                                 ))}
                             </div>
-
                             {selectedSummaryGoal && (
                                 <div className="space-y-4">
                                     <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl relative">
-                                        <p className="text-[10px] font-bold opacity-60 uppercase mb-1">Monthly Progress</p>
                                         <h2 className="text-3xl font-black">{selectedSummaryGoal}</h2>
                                     </div>
-
-                                    {/* Restored Calendar Visual */}
                                     <div className="bg-white p-6 rounded-[3rem] shadow-sm border border-slate-100">
                                         <div className="grid grid-cols-7 gap-2 text-center">
                                             {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-slate-300 mb-2">{d}</div>)}
@@ -171,11 +185,7 @@
                                                 const day = i + 1;
                                                 const checkKey = `${getCalendarDays().year}-${String(getCalendarDays().month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                                                 const isDone = history[checkKey]?.includes(selectedSummaryGoal);
-                                                return (
-                                                    <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-xs font-bold transition-all ${isDone ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>
-                                                        {day}
-                                                    </div>
-                                                );
+                                                return <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-xs font-bold ${isDone ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>{day}</div>;
                                             })}
                                         </div>
                                     </div>
@@ -185,15 +195,49 @@
                     )}
 
                     {page === 'social' && (
-                        <div className="animate-fadeIn text-center py-20 bg-white rounded-[3rem] border-2 border-dashed border-slate-100 text-slate-400 font-bold text-sm">
-                            Social Hub coming soon...
+                        <div className="animate-fadeIn space-y-6">
+                            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
+                                <div>
+                                    <label className="text-[10px] font-black text-indigo-600 uppercase ml-1">Create Group</label>
+                                    <div className="flex gap-2 mt-1">
+                                        <input className="flex-1 bg-slate-50 px-4 py-3 rounded-2xl text-sm outline-none border border-transparent focus:border-indigo-200" placeholder="E.g. Gym Bros" value={groupInput} onChange={e => setGroupInput(e.target.value)} />
+                                        <button onClick={handleCreateGroup} className="bg-indigo-600 text-white px-6 rounded-2xl font-bold text-xs uppercase">Create</button>
+                                    </div>
+                                </div>
+                                <div className="pt-2 border-t border-slate-50">
+                                    <label className="text-[10px] font-black text-indigo-600 uppercase ml-1">Join Group</label>
+                                    <div className="flex gap-2 mt-1">
+                                        <input className="flex-1 bg-slate-50 px-4 py-3 rounded-2xl text-sm outline-none border border-transparent focus:border-indigo-200" placeholder="Enter 6-digit code" value={joinInput} onChange={e => setJoinInput(e.target.value)} />
+                                        <button onClick={handleJoinGroup} className="border-2 border-indigo-600 text-indigo-600 px-6 rounded-2xl font-bold text-xs uppercase">Join</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-2">Your Communities</h3>
+                                {groups.length === 0 ? (
+                                    <div className="text-center py-10 text-slate-300 text-sm italic">No groups yet. Create one above!</div>
+                                ) : (
+                                    groups.map(g => (
+                                        <div key={g.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex justify-between items-center">
+                                            <div>
+                                                <p className="font-bold text-slate-700">{g.name}</p>
+                                                <p className="text-[10px] font-black text-indigo-400 uppercase">Code: {g.id}</p>
+                                            </div>
+                                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                                                {g.members.length}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
                         </div>
                     )}
 
                     <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
                         <div className="bg-white/95 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
                             {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
+                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>
                                     {p.toUpperCase()}
                                 </button>
                             ))}
