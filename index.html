@@ -3,12 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Persistence Fix</title>
+    <title>Journally - Stats Build</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-view { animation: fadeIn 0.4s ease-out forwards; }
+    </style>
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans">
     <div id="root"></div>
@@ -23,41 +27,33 @@
         function App() {
             const [session, setSession] = useState(null);
             const [loading, setLoading] = useState(true);
+            const [page, setPage] = useState('daily'); // 'daily' or 'summary'
             const [goals, setGoals] = useState([]);
             const [logs, setLogs] = useState([]);
             const [viewDate, setViewDate] = useState(new Date());
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
-            // --- THE FIX: The refresh function now accepts a 'passedSession' ---
             const refreshData = async (activeSession) => {
                 const user = activeSession?.user || session?.user;
                 if (!user) return;
-
-                // Fetch data only when we have a confirmed user ID
                 const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).is('deleted_at', null);
-                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id).eq('logged_date', dateKey);
-                
+                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id);
                 setGoals(g || []);
                 setLogs(l || []);
             };
 
-            // --- THE GATEKEEPER: This runs once on page load ---
             useEffect(() => {
-                const initAuth = async () => {
+                const init = async () => {
                     const { data: { session: s } } = await supabaseClient.auth.getSession();
-                    if (s) {
-                        setSession(s);
-                        // We pass 's' directly here to ensure we don't wait for the state to update
-                        await refreshData(s);
-                    }
+                    if (s) { setSession(s); await refreshData(s); }
                     setLoading(false);
                 };
-                initAuth();
-            }, [dateKey]); // Refetches if you change the date
+                init();
+            }, []);
 
             const toggleLog = async (goalId) => {
-                const existing = logs.find(l => l.goal_id === goalId);
+                const existing = logs.find(l => l.goal_id === goalId && l.logged_date === dateKey);
                 if (existing) {
                     await supabaseClient.from('logs').delete().eq('id', existing.id);
                 } else {
@@ -66,56 +62,69 @@
                 refreshData();
             };
 
-            const addHabit = async () => {
-                const name = prompt("New habit name:");
-                if (!name) return;
-                await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]);
-                refreshData();
+            // Calculation Logic for Summary
+            const getStats = () => {
+                const totalPossible = goals.length * 7;
+                const last7Days = [...Array(7)].map((_, i) => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - i);
+                    return d.toISOString().split('T')[0];
+                });
+                const recentLogs = logs.filter(l => last7Days.includes(l.logged_date));
+                return {
+                    completionRate: totalPossible > 0 ? Math.round((recentLogs.length / totalPossible) * 100) : 0,
+                    totalWins: logs.length
+                };
             };
 
-            if (loading) return (
-                <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse text-xs tracking-widest">
-                    RESTORING SESSION...
-                </div>
-            );
-
-            if (!session) return <div className="p-20 text-center font-bold">Please sign in to view your habits.</div>;
+            if (loading) return <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse uppercase tracking-widest text-xs">Loading Life...</div>;
 
             return (
-                <div className="max-w-md mx-auto p-6 space-y-6">
-                    <header className="flex justify-between items-center">
+                <div className="max-w-md mx-auto p-6 pb-32">
+                    <header className="flex justify-between items-center mb-8">
                         <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-                        <span className="text-[10px] font-bold text-green-500 bg-green-50 px-2 py-1 rounded">SECURE</span>
+                        <button onClick={() => setPage(page === 'daily' ? 'summary' : 'daily')} className="text-[10px] font-black bg-slate-100 px-4 py-2 rounded-full uppercase tracking-widest">
+                            {page === 'daily' ? 'View Stats' : 'Go Back'}
+                        </button>
                     </header>
 
-                    {/* Simple Date Control */}
-                    <div className="flex justify-between items-center bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
-                        <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="font-bold text-indigo-600">←</button>
-                        <span className="font-bold">{viewDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                        <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="font-bold text-indigo-600">→</button>
-                    </div>
-
-                    <div className="space-y-3">
-                        {goals.map(g => (
-                            <div 
-                                key={g.id} 
-                                onClick={() => toggleLog(g.id)}
-                                className="p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center cursor-pointer shadow-sm hover:border-indigo-100 transition-all"
-                            >
-                                <span className="font-bold text-slate-700">{g.name}</span>
-                                {logs.some(l => l.goal_id === g.id) && (
-                                    <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px]">✓</div>
-                                )}
+                    {page === 'daily' ? (
+                        <div className="animate-view space-y-4">
+                             <div className="flex justify-between items-center bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="font-bold text-indigo-600 px-4">←</button>
+                                <span className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}</span>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="font-bold text-indigo-600 px-4">→</button>
                             </div>
-                        ))}
-                    </div>
 
-                    <button 
-                        onClick={addHabit}
-                        className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-white hover:text-indigo-500 transition-all"
-                    >
-                        + Add Habit
-                    </button>
+                            {goals.map(g => (
+                                <div key={g.id} onClick={() => toggleLog(g.id)} className="p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center cursor-pointer shadow-sm active:scale-95 transition-all">
+                                    <span className={`font-bold ${logs.some(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-600'}`}>{g.name}</span>
+                                    {logs.some(l => l.goal_id === g.id && l.logged_date === dateKey) && <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px]">✓</div>}
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="animate-view space-y-6">
+                            <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl">
+                                <p className="text-[10px] font-black uppercase opacity-60 tracking-[0.2em] mb-2">7-Day Performance</p>
+                                <div className="text-5xl font-black italic mb-4">{getStats().completionRate}%</div>
+                                <div className="w-full h-2 bg-indigo-400/30 rounded-full overflow-hidden">
+                                    <div className="h-full bg-white rounded-full transition-all duration-1000" style={{ width: `${getStats().completionRate}%` }}></div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 text-center">
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lifetime Wins</p>
+                                    <p className="text-3xl font-black text-indigo-600">{getStats().totalWins}</p>
+                                </div>
+                                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 text-center">
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Habits</p>
+                                    <p className="text-3xl font-black text-slate-800">{goals.length}</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
