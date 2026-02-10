@@ -3,18 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Fixed Persistence</title>
+    <title>Journally - Debug Build</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-    <style>
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-view { animation: fadeIn 0.3s ease-out forwards; }
-    </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans select-none overflow-x-hidden">
+<body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -22,159 +18,95 @@
 
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+            auth: { persistSession: true, autoRefreshToken: true }
+        });
 
         function App() {
             const [session, setSession] = useState(null);
-            const [loading, setLoading] = useState(true); // New loading state
-            const [page, setPage] = useState('daily');
-            const [viewDate, setViewDate] = useState(new Date());
+            const [loading, setLoading] = useState(true);
             const [goals, setGoals] = useState([]);
-            const [logs, setLogs] = useState([]);
-            const [archivedGoals, setArchivedGoals] = useState([]);
             const [status, setStatus] = useState('');
-            const [showArchive, setShowArchive] = useState(false);
-            
-            const [swipedId, setSwipedId] = useState(null);
-            const [touchStart, setTouchStart] = useState(0);
 
-            const dateKey = viewDate.toISOString().split('T')[0];
-
-            // Core Fetching Logic
             const refreshData = async (user) => {
                 const activeUser = user || session?.user;
                 if (!activeUser) return;
                 
-                setStatus('Syncing...');
-                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', activeUser.id).is('deleted_at', null);
-                const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', activeUser.id).not('deleted_at', 'is', null);
-                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', activeUser.id);
-                
-                setGoals(g || []);
-                setArchivedGoals(arc || []);
-                setLogs(l || []);
-                setStatus('');
+                setStatus('Loading from DB...');
+                const { data, error } = await supabaseClient
+                    .from('goals')
+                    .select('*')
+                    .eq('user_id', activeUser.id)
+                    .is('deleted_at', null);
+
+                if (error) {
+                    console.error("DB Error:", error);
+                    setStatus('Error!');
+                } else {
+                    console.log("Found goals:", data);
+                    setGoals(data || []);
+                    setStatus('Ready');
+                }
             };
 
-            // Stable Initialization
             useEffect(() => {
-                const checkUser = async () => {
+                const init = async () => {
                     const { data: { session: s } } = await supabaseClient.auth.getSession();
                     if (s) {
                         setSession(s);
                         await refreshData(s);
+                    } else {
+                        // FORCE LOGIN FOR TESTING IF NO SESSION
+                        // If you see this, you need to re-login!
+                        console.log("No session found");
                     }
-                    setLoading(false); // Stop loading ONLY after data is fetched
+                    setLoading(false);
                 };
-                checkUser();
+                init();
             }, []);
 
-            // UI Actions
-            const handleAddGoal = async () => {
-                const name = prompt("Enter habit name:");
-                if (!name) return;
-                await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]);
-                await refreshData();
-            };
-
-            const toggleLog = async (goalId) => {
-                const existing = logs.find(l => l.goal_id === goalId && l.logged_date === dateKey);
-                if (existing) {
-                    await supabaseClient.from('logs').delete().eq('id', existing.id);
-                } else {
-                    await supabaseClient.from('logs').insert([{ goal_id: goalId, user_id: session.user.id, logged_date: dateKey }]);
-                }
-                await refreshData();
-            };
-
-            // Helper swipe functions
-            const onTS = (e) => setTouchStart(e.targetTouches[0].clientX);
-            const onTM = (e, id) => {
-                const touchEnd = e.targetTouches[0].clientX;
-                if (touchStart - touchEnd > 70) setSwipedId(id);
-                if (touchEnd - touchStart > 70) setSwipedId(null);
-            };
-
-            // Loading screen prevents the "disappearing" effect
-            if (loading) return (
-                <div className="flex h-screen items-center justify-center bg-slate-50">
-                    <div className="text-indigo-600 font-black animate-pulse uppercase tracking-widest text-xs">Syncing Your Habits...</div>
+            if (loading) return <div className="p-20 text-center font-bold">Waking up Database...</div>;
+            if (!session) return (
+                <div className="p-20 text-center">
+                    <p className="mb-4">No active session.</p>
+                    <button onClick={() => supabaseClient.auth.signInWithPassword()} className="bg-indigo-600 text-white p-4 rounded-xl">Login</button>
                 </div>
             );
 
-            // If no session after loading, show login message
-            if (!session) return <div className="p-20 text-center">Please sign in to view habits.</div>;
-
             return (
-                <div className="max-w-md mx-auto p-6 pb-40 min-h-screen" onClick={() => setSwipedId(null)}>
-                    <header className="flex justify-between items-center mb-8">
+                <div className="max-w-md mx-auto p-6">
+                    <header className="flex justify-between mb-8">
                         <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{status || 'Synced'}</div>
+                        <div className="text-[10px] font-bold text-slate-400">{status}</div>
                     </header>
 
-                    {page === 'daily' && (
-                        <div className="animate-view space-y-4">
-                            <div className="bg-white p-4 rounded-3xl border border-slate-100 flex justify-between items-center mb-6" onClick={(e) => e.stopPropagation()}>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
-                                <span className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
+                    <div className="space-y-4">
+                        {goals.length === 0 && <p className="text-center text-slate-400">Nothing here. Try adding a habit.</p>}
+                        {goals.map(g => (
+                            <div key={g.id} className="p-6 bg-white border-2 border-slate-50 rounded-[2rem] font-bold">
+                                {g.name}
                             </div>
-
-                            {goals.map(g => (
-                                <div key={g.id} className="relative overflow-hidden rounded-[2rem]" onClick={(e) => e.stopPropagation()}>
-                                    <div className="absolute inset-0 flex justify-end items-center pr-4 gap-2 bg-slate-100">
-                                        <button onClick={async () => {
-                                            const newName = prompt("Rename habit:", g.name);
-                                            if (newName) {
-                                                await supabaseClient.from('goals').update({ name: newName }).eq('id', g.id);
-                                                refreshData();
-                                            }
-                                            setSwipedId(null);
-                                        }} className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm">✎</button>
-                                        <button onClick={async () => {
-                                            await supabaseClient.from('goals').update({ deleted_at: new Date().toISOString() }).eq('id', g.id);
-                                            refreshData();
-                                            setSwipedId(null);
-                                        }} className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center">✕</button>
-                                    </div>
-                                    <div 
-                                        onTouchStart={onTS} onTouchMove={(e) => onTM(e, g.id)}
-                                        style={{ transform: swipedId === g.id ? 'translateX(-130px)' : 'translateX(0)' }}
-                                        className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out"
-                                        onClick={() => swipedId === g.id ? setSwipedId(null) : toggleLog(g.id)}
-                                    >
-                                        <span className={`font-bold ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-700'}`}>{g.name}</span>
-                                        {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md">✓</div>}
-                                    </div>
-                                </div>
-                            ))}
-                            <button onClick={handleAddGoal} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-white transition-all">+ New Habit</button>
-                            
-                            {/* Archive Section */}
-                            <div className="pt-10 text-center">
-                                <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{showArchive ? 'Hide Archive' : 'View Archived Habits'}</button>
-                                {showArchive && archivedGoals.map(ag => (
-                                    <div key={ag.id} className="mt-2 p-4 bg-slate-100/50 rounded-2xl flex justify-between items-center animate-view">
-                                        <span className="text-sm font-bold text-slate-500 px-2">{ag.name}</span>
-                                        <div className="flex gap-4 items-center">
-                                            <button onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} className="text-[10px] text-indigo-500 font-bold uppercase tracking-widest">Restore</button>
-                                            <button onClick={async () => { if(confirm("Permanent delete?")) { await supabaseClient.from('goals').delete().eq('id', ag.id); refreshData(); } }} className="w-8 h-8 bg-red-50 text-red-400 rounded-full flex items-center justify-center text-[10px]">✕</button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none" onClick={(e) => e.stopPropagation()}>
-                        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
-                            {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
-                                    {p.toUpperCase()}
-                                </button>
-                            ))}
-                        </div>
-                    </nav>
+                        ))}
+                        <button 
+                            onClick={async () => {
+                                const name = prompt("Habit name:");
+                                if(name) {
+                                    await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]);
+                                    refreshData();
+                                }
+                            }}
+                            className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold"
+                        >
+                            + Add New
+                        </button>
+                        
+                        <button 
+                            onClick={() => { supabaseClient.auth.signOut(); location.reload(); }}
+                            className="w-full mt-10 text-[10px] text-slate-300 uppercase tracking-widest"
+                        >
+                            Sign Out / Reset Session
+                        </button>
+                    </div>
                 </div>
             );
         }
