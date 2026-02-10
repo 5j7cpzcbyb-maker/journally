@@ -1,17 +1,14 @@
-// --- CONFIGURATION ---
-const SUPABASE_URL = 'https://your-project-url.supabase.co';
-const SUPABASE_KEY = 'your-anon-public-key-here';
-const ACCESS_KEY = "1234"; // Your app password
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Journally</title>
+    <title>Journally Cloud</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 </head>
 <body class="bg-slate-50">
     <div id="root"></div>
@@ -19,29 +16,61 @@ const ACCESS_KEY = "1234"; // Your app password
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // Change this to your password
+        // --- CONFIGURATION (FILL THESE IN) ---
+        const SUPABASE_URL = 'https://your-project-url.supabase.co';
+        const SUPABASE_KEY = 'your-anon-public-key-here';
         const APP_KEY = "1234"; 
+
+        // Initialize Supabase Client
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         function App() {
             const [isLoggedIn, setIsLoggedIn] = useState(false);
             const [passInput, setPassInput] = useState('');
             const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
 
             const [currentDate, setCurrentDate] = useState(new Date());
-            const [goals, setGoals] = useState(() => JSON.parse(localStorage.getItem('j-goals')) || []);
-            const [history, setHistory] = useState(() => JSON.parse(localStorage.getItem('j-history')) || {});
+            const [goals, setGoals] = useState([]);
+            const [history, setHistory] = useState({});
             const [newGoal, setNewGoal] = useState('');
             const [view, setView] = useState('daily');
 
-            useEffect(() => {
-                localStorage.setItem('j-goals', JSON.stringify(goals));
-                localStorage.setItem('j-history', JSON.stringify(history));
-            }, [goals, history]);
+            // --- CLOUD LOGIC ---
+
+            // Load data from Supabase
+            const loadData = async () => {
+                setLoading(true);
+                const { data, error } = await supabaseClient
+                    .from('journally_data')
+                    .select('content')
+                    .eq('user_id', 'main_user')
+                    .single();
+
+                if (data && data.content) {
+                    setGoals(data.content.goals || []);
+                    setHistory(data.content.history || {});
+                }
+                setLoading(false);
+            };
+
+            // Save data to Supabase
+            const saveData = async (updatedGoals, updatedHistory) => {
+                const { error } = await supabaseClient
+                    .from('journally_data')
+                    .upsert({ 
+                        user_id: 'main_user', 
+                        content: { goals: updatedGoals, history: updatedHistory } 
+                    }, { onConflict: 'user_id' });
+                
+                if (error) console.error("Save error:", error);
+            };
 
             const handleLogin = (e) => {
                 e.preventDefault();
                 if (passInput === APP_KEY) {
                     setIsLoggedIn(true);
+                    loadData(); // Fetch data immediately on login
                 } else {
                     setError('Wrong Key');
                 }
@@ -55,25 +84,32 @@ const ACCESS_KEY = "1234"; // Your app password
                 setCurrentDate(newDate);
             };
 
-            const addGoal = (e) => {
+            const addGoal = async (e) => {
                 e.preventDefault();
                 if (!newGoal.trim()) return;
-                setGoals([...goals, { id: Date.now(), text: newGoal }]);
+                const updatedGoals = [...goals, { id: Date.now(), text: newGoal }];
+                setGoals(updatedGoals);
                 setNewGoal('');
+                await saveData(updatedGoals, history); // Save to Cloud
             };
 
-            const deleteGoal = (id) => {
+            const deleteGoal = async (id) => {
                 if(confirm("Delete this goal permanently?")) {
-                    setGoals(goals.filter(g => g.id !== id));
+                    const updatedGoals = goals.filter(g => g.id !== id);
+                    setGoals(updatedGoals);
+                    await saveData(updatedGoals, history); // Save to Cloud
                 }
             };
 
-            const toggleTask = (goalId) => {
+            const toggleTask = async (goalId) => {
                 const dayTasks = history[dateKey] || [];
                 const newDayTasks = dayTasks.includes(goalId)
                     ? dayTasks.filter(id => id !== goalId)
                     : [...dayTasks, goalId];
-                setHistory({ ...history, [dateKey]: newDayTasks });
+                
+                const updatedHistory = { ...history, [dateKey]: newDayTasks };
+                setHistory(updatedHistory);
+                await saveData(goals, updatedHistory); // Save to Cloud
             };
 
             const getMonthlyProgress = () => {
@@ -85,7 +121,7 @@ const ACCESS_KEY = "1234"; // Your app password
                 Object.keys(history).forEach(key => {
                     const d = new Date(key);
                     if (d.getMonth() === month && d.getFullYear() === year) {
-                        completed += history[key].length;
+                        completed += (history[key] || []).length;
                     }
                 });
                 return totalPossible === 0 ? 0 : Math.round((completed / totalPossible) * 100);
@@ -105,12 +141,14 @@ const ACCESS_KEY = "1234"; // Your app password
                                     className="w-full px-4 py-3 border rounded-xl text-center outline-none focus:ring-2 focus:ring-indigo-500"
                                 />
                                 {error && <p className="text-red-500 text-sm">{error}</p>}
-                                <button className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold">Unlock</button>
+                                <button className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition">Unlock & Sync</button>
                             </form>
                         </div>
                     </div>
                 );
             }
+
+            if (loading) return <div className="flex items-center justify-center min-h-screen text-indigo-600 font-bold">Loading Cloud Data...</div>;
 
             return (
                 <div className="min-h-screen p-4 md:p-8 flex justify-center">
@@ -118,13 +156,13 @@ const ACCESS_KEY = "1234"; // Your app password
                         {/* Header */}
                         <div className="bg-indigo-600 p-6 text-white text-center">
                             <div className="flex justify-between items-center mb-6">
-                                <button onClick={() => setView('daily')} className="text-xs font-bold bg-indigo-500 px-3 py-1 rounded-full uppercase tracking-tighter">Daily</button>
-                                <button onClick={() => setView('summary')} className="text-xs font-bold bg-indigo-500 px-3 py-1 rounded-full uppercase tracking-tighter">Stats</button>
+                                <button onClick={() => setView('daily')} className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-tighter ${view === 'daily' ? 'bg-white text-indigo-600' : 'bg-indigo-500'}`}>Daily</button>
+                                <button onClick={() => setView('summary')} className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-tighter ${view === 'summary' ? 'bg-white text-indigo-600' : 'bg-indigo-500'}`}>Stats</button>
                                 <button onClick={() => setIsLoggedIn(false)} className="text-xs font-bold bg-red-500 px-3 py-1 rounded-full uppercase tracking-tighter">Lock</button>
                             </div>
                             
                             <div className="flex justify-between items-center bg-indigo-900/30 rounded-2xl p-3">
-                                <button onClick={() => changeDate(-1)} className="text-xl">←</button>
+                                <button onClick={() => changeDate(-1)} className="text-xl hover:scale-110 transition">←</button>
                                 <div className="text-center">
                                     <p className="text-xs opacity-70 uppercase font-bold tracking-widest">
                                         {currentDate.toLocaleDateString('en-US', { weekday: 'short' })}
@@ -133,7 +171,7 @@ const ACCESS_KEY = "1234"; // Your app password
                                         {currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                     </p>
                                 </div>
-                                <button onClick={() => changeDate(1)} className="text-xl">→</button>
+                                <button onClick={() => changeDate(1)} className="text-xl hover:scale-110 transition">→</button>
                             </div>
                         </div>
 
@@ -148,7 +186,7 @@ const ACCESS_KEY = "1234"; // Your app password
                                             placeholder="Add habit..."
                                             className="flex-1 px-4 py-2 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                                         />
-                                        <button className="bg-indigo-600 text-white w-10 h-10 rounded-xl font-bold">+</button>
+                                        <button type="submit" className="bg-indigo-600 text-white w-10 h-10 rounded-xl font-bold">+</button>
                                     </form>
 
                                     <div className="space-y-3">
@@ -171,6 +209,7 @@ const ACCESS_KEY = "1234"; // Your app password
                                                 </div>
                                             );
                                         })}
+                                        {goals.length === 0 && <p className="text-center text-slate-400 py-10">No goals yet.</p>}
                                     </div>
                                 </>
                             ) : (
@@ -180,6 +219,7 @@ const ACCESS_KEY = "1234"; // Your app password
                                     <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
                                         <div className="bg-indigo-600 h-full transition-all duration-1000" style={{width: `${getMonthlyProgress()}%`}}></div>
                                     </div>
+                                    <p className="mt-4 text-sm text-slate-400 italic">Syncing across all devices</p>
                                 </div>
                             )}
                         </div>
