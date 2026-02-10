@@ -20,7 +20,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect } = React;
 
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
@@ -34,7 +34,6 @@
             const [logs, setLogs] = useState([]);
             const [archivedGoals, setArchivedGoals] = useState([]);
             const [groups, setGroups] = useState([]);
-            const [activeGroupId, setActiveGroupId] = useState(null);
             const [selectedGoalFilter, setSelectedGoalFilter] = useState('all');
             const [showArchive, setShowArchive] = useState(false);
             const [status, setStatus] = useState('');
@@ -51,31 +50,34 @@
             async function refreshData() {
                 if (!session) return;
                 setStatus('Syncing...');
-                
-                // 1. Fetch Goals (Active)
                 const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).is('deleted_at', null);
                 setGoals(g || []);
-
-                // 2. Fetch Archived Goals
                 const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).not('deleted_at', 'is', null);
                 setArchivedGoals(arc || []);
-
-                // 3. Fetch All Logs for Heatmap
                 const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', session.user.id);
                 setLogs(l || []);
-
-                // 4. Fetch Memberships & Groups
                 const { data: m } = await supabaseClient.from('memberships').select('group_id, groups(*)').eq('user_id', session.user.id);
                 setGroups(m?.map(item => item.groups) || []);
-
                 setStatus('');
             }
 
-            // DAILY ACTIONS
+            // --- GOAL ACTIONS ---
             const handleAddGoal = async () => {
-                const name = prompt("Enter goal name:");
+                const name = prompt("Enter habit name:");
                 if (!name) return;
                 await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]);
+                refreshData();
+            };
+
+            const handleEditGoal = async (id, oldName) => {
+                const newName = prompt("Rename habit:", oldName);
+                if (!newName || newName === oldName) return;
+                await supabaseClient.from('goals').update({ name: newName }).eq('id', id);
+                refreshData();
+            };
+
+            const deleteGoal = async (id) => {
+                await supabaseClient.from('goals').update({ deleted_at: new Date().toISOString() }).eq('id', id);
                 refreshData();
             };
 
@@ -89,121 +91,107 @@
                 refreshData();
             };
 
-            const deleteGoal = async (id) => {
-                await supabaseClient.from('goals').update({ deleted_at: new Date() }).eq('id', id);
+            // --- GROUP ACTIONS ---
+            const handleCreateGroup = async () => {
+                const name = prompt("Group Name:");
+                if (!name) return;
+                const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+                const { data: newGroup } = await supabaseClient.from('groups').insert([{ name, invite_code: code, created_by: session.user.id }]).select().single();
+                if (newGroup) await supabaseClient.from('memberships').insert([{ group_id: newGroup.id, user_id: session.user.id }]);
                 refreshData();
             };
 
-            const restoreGoal = async (id) => {
-                await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', id);
-                refreshData();
+            const handleJoinGroup = async () => {
+                const code = prompt("Enter 6-digit Invite Code:");
+                if (!code) return;
+                const { data: group } = await supabaseClient.from('groups').select('*').eq('invite_code', code.toUpperCase()).single();
+                if (group) {
+                    await supabaseClient.from('memberships').insert([{ group_id: group.id, user_id: session.user.id }]);
+                    refreshData();
+                } else {
+                    alert("Group not found!");
+                }
             };
 
-            // SUMMARY LOGIC (GRADIENT)
+            // --- RENDER HELPERS ---
             const getHeatmapColor = (dayDate) => {
                 const dayStr = dayDate.toISOString().split('T')[0];
                 const dayLogs = logs.filter(l => l.logged_date === dayStr);
-                
-                // Active goals on that specific date
-                const activeOnDay = goals.filter(g => new Date(g.created_at) <= dayDate).length 
-                                  + archivedGoals.filter(g => new Date(g.created_at) <= dayDate && new Date(g.deleted_at) > dayDate).length;
-
-                if (activeOnDay === 0) return 'bg-slate-200 opacity-20'; // Before creation
-                
+                const activeOnDay = goals.filter(g => new Date(g.created_at) <= dayDate).length;
+                if (activeOnDay === 0) return 'bg-slate-100';
                 const ratio = dayLogs.length / activeOnDay;
-                if (ratio === 0) return 'bg-yellow-100';
-                if (ratio < 0.5) return 'bg-yellow-400';
-                if (ratio < 1) return 'bg-green-300';
-                return 'bg-green-600 shadow-sm';
+                return ratio === 1 ? 'bg-green-500' : ratio > 0 ? 'bg-yellow-400' : 'bg-slate-200';
             };
 
-            if (!session) return <div className="p-20 text-center font-bold text-indigo-600">Authenticating...</div>;
+            if (!session) return <div className="p-20 text-center font-bold">Connecting...</div>;
 
             return (
                 <div className="max-w-md mx-auto p-6 pb-40">
-                    <header className="flex justify-between items-center mb-6">
-                        <h1 className="text-2xl font-black text-indigo-600 italic">Journally</h1>
-                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Online'}</span>
+                    <header className="flex justify-between items-center mb-8">
+                        <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{status || 'Synced'}</div>
                     </header>
 
                     {page === 'daily' && (
                         <div className="animate-view space-y-4">
-                            <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-2">
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
-                                <p className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
+                            <div className="bg-white p-4 rounded-3xl border border-slate-100 flex justify-between items-center mb-6">
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2">←</button>
+                                <span className="font-bold">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2">→</button>
                             </div>
 
                             {goals.map(g => (
-                                <div key={g.id} className="relative group">
-                                    <div onClick={() => toggleLog(g.id)} className={`p-6 rounded-3xl flex justify-between items-center transition-all cursor-pointer ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'bg-indigo-600 text-white' : 'bg-white border-2 border-slate-100'}`}>
+                                <div key={g.id} className="group relative flex items-center gap-2">
+                                    <div onClick={() => toggleLog(g.id)} className={`flex-1 p-6 rounded-[2rem] flex justify-between items-center transition-all cursor-pointer ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'bg-indigo-600 text-white' : 'bg-white border-2 border-slate-100'}`}>
                                         <span className="font-bold">{g.name}</span>
                                         {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && <span>✓</span>}
                                     </div>
-                                    <button onClick={() => deleteGoal(g.id)} className="absolute -right-2 -top-2 bg-red-500 text-white w-6 h-6 rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                                    <button onClick={() => handleEditGoal(g.id, g.name)} className="p-4 bg-slate-100 rounded-2xl text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">✎</button>
+                                    <button onClick={() => deleteGoal(g.id)} className="p-4 bg-red-50 rounded-2xl text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                                 </div>
                             ))}
-
-                            <button onClick={handleAddGoal} className="w-full py-6 rounded-3xl border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:border-indigo-300 hover:text-indigo-400 transition-all">+ Add New Habit</button>
                             
-                            <div className="pt-10">
-                                <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest block mx-auto">{showArchive ? 'Hide Archive' : 'View Archived Habits'}</button>
-                                {showArchive && (
-                                    <div className="mt-4 space-y-2">
-                                        {archivedGoals.map(g => (
-                                            <div key={g.id} className="bg-slate-100 p-4 rounded-2xl flex justify-between items-center opacity-60">
-                                                <span className="text-sm font-bold">{g.name}</span>
-                                                <button onClick={() => restoreGoal(g.id)} className="text-[10px] font-bold text-indigo-600 underline">Restore</button>
-                                            </div>
-                                        ))}
+                            <button onClick={handleAddGoal} className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold">+ New Habit</button>
+                            
+                            <div className="pt-10 text-center">
+                                <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                                    {showArchive ? 'Hide Archive' : 'View Archived Habits'}
+                                </button>
+                                {showArchive && archivedGoals.map(ag => (
+                                    <div key={ag.id} className="mt-2 p-4 bg-slate-50 rounded-2xl flex justify-between items-center">
+                                        <span className="text-sm font-bold text-slate-400">{ag.name}</span>
+                                        <button onClick={async () => { await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', ag.id); refreshData(); }} className="text-[10px] text-indigo-500 font-bold uppercase">Restore</button>
                                     </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {page === 'summary' && (
-                        <div className="animate-view space-y-6">
-                            <select 
-                                value={selectedGoalFilter} 
-                                onChange={(e) => setSelectedGoalFilter(e.target.value)}
-                                className="w-full p-4 bg-white border-2 border-slate-100 rounded-2xl font-bold text-slate-700 outline-none focus:border-indigo-400"
-                            >
-                                <option value="all">📊 All Goals (Gradient View)</option>
-                                {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                            </select>
-
-                            <div className="bg-white p-6 rounded-[3rem] shadow-sm border border-slate-100">
-                                <div className="grid grid-cols-7 gap-2">
-                                    {Array.from({ length: 31 }).map((_, i) => {
-                                        const d = new Date(); d.setDate(i + 1);
-                                        return <div key={i} className={`aspect-square rounded-xl ${getHeatmapColor(d)} flex items-center justify-center text-[10px] font-bold`}>{i+1}</div>
-                                    })}
-                                </div>
+                                ))}
                             </div>
                         </div>
                     )}
 
                     {page === 'social' && (
                         <div className="animate-view space-y-6">
-                            <div className="bg-indigo-600 p-6 rounded-[2.5rem] text-white">
-                                <h3 className="text-xs font-black uppercase opacity-60">My Groups</h3>
-                                <div className="mt-4 space-y-2">
-                                    {groups.map(g => (
-                                        <div key={g.id} className="flex justify-between items-center p-4 bg-white/10 rounded-2xl">
-                                            <span className="font-bold">{g.name}</span>
-                                            <span className="text-[10px] font-mono bg-white/20 px-2 py-1 rounded">{g.invite_code}</span>
+                            <div className="flex gap-2">
+                                <button onClick={handleCreateGroup} className="flex-1 p-4 bg-indigo-600 text-white rounded-2xl font-bold">Create Group</button>
+                                <button onClick={handleJoinGroup} className="flex-1 p-4 bg-white border-2 border-slate-100 rounded-2xl font-bold text-slate-600">Join Group</button>
+                            </div>
+                            <div className="space-y-3">
+                                {groups.map(group => (
+                                    <div key={group.id} className="bg-white p-6 rounded-3xl border border-slate-100 flex justify-between items-center shadow-sm">
+                                        <div>
+                                            <p className="font-black text-slate-800">{group.name}</p>
+                                            <p className="text-[10px] font-mono text-slate-400 uppercase tracking-tighter">Code: {group.invite_code}</p>
                                         </div>
-                                    ))}
-                                </div>
+                                        <button onClick={async () => { if(confirm("Leave group?")) { await supabaseClient.from('memberships').delete().eq('group_id', group.id).eq('user_id', session.user.id); refreshData(); } }} className="text-xs font-bold text-red-400">Leave</button>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     )}
 
-                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
-                        <div className="bg-white/95 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
+                    {/* Navigation remains same... */}
+                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center">
+                        <div className="bg-white border border-slate-200 p-2 rounded-full shadow-xl flex gap-1">
                             {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
+                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
                                     {p.toUpperCase()}
                                 </button>
                             ))}
