@@ -3,18 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Stats Build</title>
+    <title>Journally - Full Management</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <style>
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-view { animation: fadeIn 0.4s ease-out forwards; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-up { animation: slideUp 0.4s ease-out forwards; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans">
+<body class="bg-slate-50 text-slate-900 font-sans select-none overflow-x-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -27,19 +28,28 @@
         function App() {
             const [session, setSession] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [page, setPage] = useState('daily'); // 'daily' or 'summary'
             const [goals, setGoals] = useState([]);
+            const [archived, setArchived] = useState([]);
             const [logs, setLogs] = useState([]);
             const [viewDate, setViewDate] = useState(new Date());
+            const [swipedId, setSwipedId] = useState(null);
+            const [showArchive, setShowArchive] = useState(false);
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
             const refreshData = async (activeSession) => {
                 const user = activeSession?.user || session?.user;
                 if (!user) return;
-                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).is('deleted_at', null);
-                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id);
+                
+                // Fetch Active
+                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).is('deleted_at', null).order('created_at', { ascending: true });
+                // Fetch Archived
+                const { data: a } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).not('deleted_at', 'is', null).order('deleted_at', { ascending: false });
+                // Fetch Logs for the specific day
+                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id).eq('logged_date', dateKey);
+                
                 setGoals(g || []);
+                setArchived(a || []);
                 setLogs(l || []);
             };
 
@@ -50,10 +60,11 @@
                     setLoading(false);
                 };
                 init();
-            }, []);
+            }, [dateKey]);
 
+            // --- GOAL ACTIONS ---
             const toggleLog = async (goalId) => {
-                const existing = logs.find(l => l.goal_id === goalId && l.logged_date === dateKey);
+                const existing = logs.find(l => l.goal_id === goalId);
                 if (existing) {
                     await supabaseClient.from('logs').delete().eq('id', existing.id);
                 } else {
@@ -62,69 +73,118 @@
                 refreshData();
             };
 
-            // Calculation Logic for Summary
-            const getStats = () => {
-                const totalPossible = goals.length * 7;
-                const last7Days = [...Array(7)].map((_, i) => {
-                    const d = new Date();
-                    d.setDate(d.getDate() - i);
-                    return d.toISOString().split('T')[0];
-                });
-                const recentLogs = logs.filter(l => last7Days.includes(l.logged_date));
-                return {
-                    completionRate: totalPossible > 0 ? Math.round((recentLogs.length / totalPossible) * 100) : 0,
-                    totalWins: logs.length
-                };
+            const editGoal = async (id, currentName) => {
+                const newName = prompt("Edit habit name:", currentName);
+                if (!newName || newName === currentName) return;
+                await supabaseClient.from('goals').update({ name: newName }).eq('id', id);
+                setSwipedId(null);
+                refreshData();
             };
 
-            if (loading) return <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse uppercase tracking-widest text-xs">Loading Life...</div>;
+            const archiveGoal = async (id) => {
+                await supabaseClient.from('goals').update({ deleted_at: new Date().toISOString() }).eq('id', id);
+                setSwipedId(null);
+                refreshData();
+            };
+
+            const restoreGoal = async (id) => {
+                await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', id);
+                refreshData();
+            };
+
+            const hardDeleteGoal = async (id) => {
+                if (confirm("Delete forever? This wipes all history for this habit.")) {
+                    await supabaseClient.from('goals').delete().eq('id', id);
+                    refreshData();
+                }
+            };
+
+            if (loading) return <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse">SYNCING...</div>;
 
             return (
-                <div className="max-w-md mx-auto p-6 pb-32">
-                    <header className="flex justify-between items-center mb-8">
-                        <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-                        <button onClick={() => setPage(page === 'daily' ? 'summary' : 'daily')} className="text-[10px] font-black bg-slate-100 px-4 py-2 rounded-full uppercase tracking-widest">
-                            {page === 'daily' ? 'View Stats' : 'Go Back'}
-                        </button>
+                <div className="max-w-md mx-auto p-6 pb-40" onClick={() => setSwipedId(null)}>
+                    <header className="mb-8">
+                        <h1 className="text-3xl font-black italic text-indigo-600 leading-none">Journally</h1>
+                        <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">Daily sheet</p>
                     </header>
 
-                    {page === 'daily' ? (
-                        <div className="animate-view space-y-4">
-                             <div className="flex justify-between items-center bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="font-bold text-indigo-600 px-4">←</button>
-                                <span className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}</span>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="font-bold text-indigo-600 px-4">→</button>
-                            </div>
-
-                            {goals.map(g => (
-                                <div key={g.id} onClick={() => toggleLog(g.id)} className="p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center cursor-pointer shadow-sm active:scale-95 transition-all">
-                                    <span className={`font-bold ${logs.some(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-600'}`}>{g.name}</span>
-                                    {logs.some(l => l.goal_id === g.id && l.logged_date === dateKey) && <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px]">✓</div>}
-                                </div>
-                            ))}
+                    {/* Date Picker */}
+                    <div className="flex justify-between items-center bg-white p-4 rounded-[2rem] shadow-sm border border-slate-100 mb-8" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
+                        <div className="text-center font-bold text-slate-700">
+                            {viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
                         </div>
-                    ) : (
-                        <div className="animate-view space-y-6">
-                            <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl">
-                                <p className="text-[10px] font-black uppercase opacity-60 tracking-[0.2em] mb-2">7-Day Performance</p>
-                                <div className="text-5xl font-black italic mb-4">{getStats().completionRate}%</div>
-                                <div className="w-full h-2 bg-indigo-400/30 rounded-full overflow-hidden">
-                                    <div className="h-full bg-white rounded-full transition-all duration-1000" style={{ width: `${getStats().completionRate}%` }}></div>
-                                </div>
-                            </div>
+                        <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
+                    </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 text-center">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lifetime Wins</p>
-                                    <p className="text-3xl font-black text-indigo-600">{getStats().totalWins}</p>
+                    {/* Goals List */}
+                    <div className="space-y-4">
+                        {goals.map(g => {
+                            const isDone = logs.some(l => l.goal_id === g.id);
+                            return (
+                                <div key={g.id} className="relative overflow-hidden rounded-[2rem]">
+                                    {/* Swipe Actions Background */}
+                                    <div className="absolute inset-0 flex justify-end items-center px-4 gap-2 bg-slate-100">
+                                        <button onClick={() => editGoal(g.id, g.name)} className="h-12 px-4 bg-white text-indigo-600 font-bold rounded-2xl text-xs uppercase shadow-sm">Edit</button>
+                                        <button onClick={() => archiveGoal(g.id)} className="h-12 px-4 bg-red-500 text-white font-bold rounded-2xl text-xs uppercase shadow-sm">Archive</button>
+                                    </div>
+                                    
+                                    {/* Main Habit Card */}
+                                    <div 
+                                        style={{ transform: swipedId === g.id ? 'translateX(-160px)' : 'translateX(0)' }}
+                                        className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out"
+                                        onClick={(e) => { e.stopPropagation(); swipedId === g.id ? setSwipedId(null) : toggleLog(g.id); }}
+                                        onTouchStart={(e) => { this.startX = e.touches[0].clientX; }}
+                                        onTouchMove={(e) => {
+                                            const diff = this.startX - e.touches[0].clientX;
+                                            if (diff > 50) setSwipedId(g.id);
+                                            if (diff < -50) setSwipedId(null);
+                                        }}
+                                    >
+                                        <span className={`font-bold transition-all ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>{g.name}</span>
+                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${isDone ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-50 border border-slate-100'}`}>
+                                            {isDone && '✓'}
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 text-center">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Habits</p>
-                                    <p className="text-3xl font-black text-slate-800">{goals.length}</p>
-                                </div>
+                            );
+                        })}
+
+                        <button 
+                            onClick={async () => {
+                                const name = prompt("New Habit:");
+                                if(name) { await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]); refreshData(); }
+                            }}
+                            className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-300 font-bold hover:text-indigo-400 hover:border-indigo-100 transition-all"
+                        >
+                            + ADD NEW HABIT
+                        </button>
+                    </div>
+
+                    {/* Archive Management */}
+                    <div className="mt-20 border-t border-slate-100 pt-10 text-center">
+                        <button 
+                            onClick={() => setShowArchive(!showArchive)}
+                            className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em]"
+                        >
+                            {showArchive ? 'Close Archive' : `View Archive (${archived.length})`}
+                        </button>
+
+                        {showArchive && (
+                            <div className="mt-6 space-y-3 animate-up px-2">
+                                {archived.length === 0 && <p className="text-xs text-slate-300 italic">Archive is empty</p>}
+                                {archived.map(ag => (
+                                    <div key={ag.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                        <span className="text-sm font-bold text-slate-400 line-through">{ag.name}</span>
+                                        <div className="flex gap-4">
+                                            <button onClick={() => restoreGoal(ag.id)} className="text-[10px] font-black text-indigo-500 uppercase">Restore</button>
+                                            <button onClick={() => hardDeleteGoal(ag.id)} className="text-[10px] font-black text-red-400 uppercase">Purge</button>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
             );
         }
