@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Ultimate Edition</title>
+    <title>Journally - Multiplayer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -29,225 +29,181 @@
         function App() {
             const [session, setSession] = useState(null);
             const [page, setPage] = useState('daily');
-            const [activeGroupId, setActiveGroupId] = useState(null);
-            const [goals, setGoals] = useState([]);
-            const [history, setHistory] = useState({});
             const [viewDate, setViewDate] = useState(new Date());
-            const [editingIndex, setEditingIndex] = useState(null);
-            const [deletingIndex, setDeletingIndex] = useState(null);
-            const [editValue, setEditValue] = useState('');
-            const [touchStart, setTouchStart] = useState(0);
-            const [selectedSummaryGoal, setSelectedSummaryGoal] = useState(null);
-            const [status, setStatus] = useState('');
+            const [goals, setGoals] = useState([]);
+            const [logs, setLogs] = useState([]);
+            const [archivedGoals, setArchivedGoals] = useState([]);
             const [groups, setGroups] = useState([]);
-            const [groupInput, setGroupInput] = useState('');
+            const [activeGroupId, setActiveGroupId] = useState(null);
+            const [selectedGoalFilter, setSelectedGoalFilter] = useState('all');
+            const [showArchive, setShowArchive] = useState(false);
+            const [status, setStatus] = useState('');
 
             const dateKey = viewDate.toISOString().split('T')[0];
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => {
                     setSession(session);
-                    if (session) loadUserData(session.user.id);
+                    if (session) refreshData();
                 });
             }, []);
 
-            async function loadUserData(userId) {
+            async function refreshData() {
+                if (!session) return;
                 setStatus('Syncing...');
-                const { data } = await supabaseClient.from('journally_data').select('content').eq('user_id', userId).single();
-                if (data) {
-                    setGoals(data.content.goals || []);
-                    setHistory(data.content.history || {});
-                    setGroups(data.content.groups || []);
-                    if (data.content.goals?.length > 0) setSelectedSummaryGoal(data.content.goals[0]);
-                }
+                
+                // 1. Fetch Goals (Active)
+                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).is('deleted_at', null);
+                setGoals(g || []);
+
+                // 2. Fetch Archived Goals
+                const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', session.user.id).not('deleted_at', 'is', null);
+                setArchivedGoals(arc || []);
+
+                // 3. Fetch All Logs for Heatmap
+                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', session.user.id);
+                setLogs(l || []);
+
+                // 4. Fetch Memberships & Groups
+                const { data: m } = await supabaseClient.from('memberships').select('group_id, groups(*)').eq('user_id', session.user.id);
+                setGroups(m?.map(item => item.groups) || []);
+
                 setStatus('');
             }
 
-            async function sync(updated) {
-                if (!session) return;
-                const content = {
-                    goals: updated.goals || goals,
-                    history: updated.history || history,
-                    groups: updated.groups || groups
-                };
-                await supabaseClient.from('journally_data').upsert({ user_id: session.user.id, content });
-            }
-
-            // GESTURE LOGIC
-            const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
-            const handleTouchEnd = (e, index, goalName) => {
-                const distance = touchStart - e.changedTouches[0].clientX;
-                if (distance < -70) { setEditingIndex(index); setEditValue(goalName); setDeletingIndex(null); }
-                else if (distance > 70) { setDeletingIndex(index); setEditingIndex(null); }
+            // DAILY ACTIONS
+            const handleAddGoal = async () => {
+                const name = prompt("Enter goal name:");
+                if (!name) return;
+                await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]);
+                refreshData();
             };
 
-            const toggleGoal = (goal) => {
-                if (editingIndex !== null || deletingIndex !== null) return;
-                const dayHistory = history[dateKey] || [];
-                const updatedDay = dayHistory.includes(goal) ? dayHistory.filter(g => g !== goal) : [...dayHistory, goal];
-                const updatedHistory = { ...history, [dateKey]: updatedDay };
-                setHistory(updatedHistory);
-                sync({ history: updatedHistory });
-            };
-
-            // CALENDAR HELPERS
-            const calendarStats = useMemo(() => {
-                const year = viewDate.getFullYear();
-                const month = viewDate.getMonth();
-                const firstDay = new Date(year, month, 1).getDay();
-                const daysInMonth = new Date(year, month + 1, 0).getDate();
-                
-                let count = 0;
-                if (selectedSummaryGoal) {
-                    for (let d = 1; d <= daysInMonth; d++) {
-                        const key = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                        if (history[key]?.includes(selectedSummaryGoal)) count++;
-                    }
+            const toggleLog = async (goalId) => {
+                const existing = logs.find(l => l.goal_id === goalId && l.logged_date === dateKey);
+                if (existing) {
+                    await supabaseClient.from('logs').delete().eq('id', existing.id);
+                } else {
+                    await supabaseClient.from('logs').insert([{ goal_id: goalId, user_id: session.user.id, logged_date: dateKey }]);
                 }
-                return { firstDay, daysInMonth, count, percent: Math.round((count/daysInMonth)*100) || 0 };
-            }, [viewDate, history, selectedSummaryGoal]);
+                refreshData();
+            };
 
-            if (!session) return <div className="p-20 text-center font-bold text-indigo-600">Loading...</div>;
+            const deleteGoal = async (id) => {
+                await supabaseClient.from('goals').update({ deleted_at: new Date() }).eq('id', id);
+                refreshData();
+            };
+
+            const restoreGoal = async (id) => {
+                await supabaseClient.from('goals').update({ deleted_at: null }).eq('id', id);
+                refreshData();
+            };
+
+            // SUMMARY LOGIC (GRADIENT)
+            const getHeatmapColor = (dayDate) => {
+                const dayStr = dayDate.toISOString().split('T')[0];
+                const dayLogs = logs.filter(l => l.logged_date === dayStr);
+                
+                // Active goals on that specific date
+                const activeOnDay = goals.filter(g => new Date(g.created_at) <= dayDate).length 
+                                  + archivedGoals.filter(g => new Date(g.created_at) <= dayDate && new Date(g.deleted_at) > dayDate).length;
+
+                if (activeOnDay === 0) return 'bg-slate-200 opacity-20'; // Before creation
+                
+                const ratio = dayLogs.length / activeOnDay;
+                if (ratio === 0) return 'bg-yellow-100';
+                if (ratio < 0.5) return 'bg-yellow-400';
+                if (ratio < 1) return 'bg-green-300';
+                return 'bg-green-600 shadow-sm';
+            };
+
+            if (!session) return <div className="p-20 text-center font-bold text-indigo-600">Authenticating...</div>;
 
             return (
                 <div className="max-w-md mx-auto p-6 pb-40">
                     <header className="flex justify-between items-center mb-6">
                         <h1 className="text-2xl font-black text-indigo-600 italic">Journally</h1>
-                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Live'}</span>
+                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Online'}</span>
                     </header>
 
                     {page === 'daily' && (
-                        <div className="animate-view">
-                            <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
+                        <div className="animate-view space-y-4">
+                            <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-2">
                                 <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
                                 <p className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
                                 <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
                             </div>
-                            <div className="space-y-3">
-                                {goals.map((g, i) => (
-                                    <div key={i} className="relative overflow-hidden rounded-3xl" onTouchStart={handleTouchStart} onTouchEnd={(e) => handleTouchEnd(e, i, g)}>
-                                        {editingIndex === i ? (
-                                            <div className="bg-slate-100 p-4 flex gap-2 animate-view">
-                                                <input autoFocus className="flex-1 bg-white px-4 py-2 rounded-xl font-bold outline-none" value={editValue} onChange={e => setEditValue(e.target.value)} />
-                                                <button onClick={() => { const u = [...goals]; u[i] = editValue; setGoals(u); setEditingIndex(null); sync({goals: u}); }} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs">Save</button>
-                                            </div>
-                                        ) : deletingIndex === i ? (
-                                            <div className="bg-red-50 p-4 flex justify-between items-center animate-view">
-                                                <span className="text-red-600 font-bold text-sm pl-2">Delete?</span>
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => { const u = goals.filter((_, idx) => idx !== i); setGoals(u); setDeletingIndex(null); sync({goals: u}); }} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Yes</button>
-                                                    <button onClick={() => setDeletingIndex(null)} className="bg-white text-slate-400 px-4 py-2 rounded-xl border font-bold text-xs">No</button>
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <div onClick={() => toggleGoal(g)} className={`p-6 flex justify-between items-center transition-all ${history[dateKey]?.includes(g) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white border-2 border-slate-100 text-slate-500'}`}>
-                                                <span className="font-bold text-lg">{g}</span>
-                                                {history[dateKey]?.includes(g) && <span className="text-2xl font-bold">✓</span>}
-                                            </div>
-                                        )}
+
+                            {goals.map(g => (
+                                <div key={g.id} className="relative group">
+                                    <div onClick={() => toggleLog(g.id)} className={`p-6 rounded-3xl flex justify-between items-center transition-all cursor-pointer ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'bg-indigo-600 text-white' : 'bg-white border-2 border-slate-100'}`}>
+                                        <span className="font-bold">{g.name}</span>
+                                        {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && <span>✓</span>}
                                     </div>
-                                ))}
+                                    <button onClick={() => deleteGoal(g.id)} className="absolute -right-2 -top-2 bg-red-500 text-white w-6 h-6 rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                                </div>
+                            ))}
+
+                            <button onClick={handleAddGoal} className="w-full py-6 rounded-3xl border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:border-indigo-300 hover:text-indigo-400 transition-all">+ Add New Habit</button>
+                            
+                            <div className="pt-10">
+                                <button onClick={() => setShowArchive(!showArchive)} className="text-[10px] font-black text-slate-300 uppercase tracking-widest block mx-auto">{showArchive ? 'Hide Archive' : 'View Archived Habits'}</button>
+                                {showArchive && (
+                                    <div className="mt-4 space-y-2">
+                                        {archivedGoals.map(g => (
+                                            <div key={g.id} className="bg-slate-100 p-4 rounded-2xl flex justify-between items-center opacity-60">
+                                                <span className="text-sm font-bold">{g.name}</span>
+                                                <button onClick={() => restoreGoal(g.id)} className="text-[10px] font-bold text-indigo-600 underline">Restore</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
                     {page === 'summary' && (
                         <div className="animate-view space-y-6">
-                            <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
-                                {goals.map((g, i) => (
-                                    <button key={i} onClick={() => setSelectedSummaryGoal(g)} className={`flex-shrink-0 px-6 py-2 rounded-full text-xs font-bold border-2 transition-all ${selectedSummaryGoal === g ? 'bg-indigo-600 border-indigo-600 text-white scale-105' : 'bg-white border-slate-100 text-slate-400'}`}>
-                                        {g}
-                                    </button>
-                                ))}
-                            </div>
+                            <select 
+                                value={selectedGoalFilter} 
+                                onChange={(e) => setSelectedGoalFilter(e.target.value)}
+                                className="w-full p-4 bg-white border-2 border-slate-100 rounded-2xl font-bold text-slate-700 outline-none focus:border-indigo-400"
+                            >
+                                <option value="all">📊 All Goals (Gradient View)</option>
+                                {goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                            </select>
 
-                            {selectedSummaryGoal && (
-                                <div className="space-y-4">
-                                    <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl flex justify-between items-center">
-                                        <div>
-                                            <p className="text-[10px] font-bold opacity-60 uppercase mb-1">Monthly Progress</p>
-                                            <h2 className="text-3xl font-black">{selectedSummaryGoal}</h2>
-                                        </div>
-                                        <div className="text-right">
-                                            <h3 className="text-2xl font-black">{calendarStats.percent}%</h3>
-                                        </div>
-                                    </div>
-
-                                    {/* RESTORED CALENDAR GRAPHIC */}
-                                    <div className="bg-white p-6 rounded-[3rem] shadow-sm border border-slate-100">
-                                        <div className="grid grid-cols-7 gap-2 text-center">
-                                            {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-slate-300 mb-2">{d}</div>)}
-                                            {Array.from({ length: calendarStats.firstDay }).map((_, i) => <div key={i} />)}
-                                            {Array.from({ length: calendarStats.daysInMonth }).map((_, i) => {
-                                                const day = i + 1;
-                                                const checkKey = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                                const isDone = history[checkKey]?.includes(selectedSummaryGoal);
-                                                return (
-                                                    <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-xs font-bold transition-all ${isDone ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>
-                                                        {day}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
+                            <div className="bg-white p-6 rounded-[3rem] shadow-sm border border-slate-100">
+                                <div className="grid grid-cols-7 gap-2">
+                                    {Array.from({ length: 31 }).map((_, i) => {
+                                        const d = new Date(); d.setDate(i + 1);
+                                        return <div key={i} className={`aspect-square rounded-xl ${getHeatmapColor(d)} flex items-center justify-center text-[10px] font-bold`}>{i+1}</div>
+                                    })}
                                 </div>
-                            )}
+                            </div>
                         </div>
                     )}
 
                     {page === 'social' && (
                         <div className="animate-view space-y-6">
-                            {!activeGroupId ? (
-                                <>
-                                    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
-                                        <div>
-                                            <label className="text-[10px] font-black text-indigo-600 uppercase ml-1">Create Community</label>
-                                            <div className="flex gap-2 mt-1">
-                                                <input className="flex-1 bg-slate-50 px-4 py-3 rounded-2xl text-sm outline-none" placeholder="Group Name" value={groupInput} onChange={e => setGroupInput(e.target.value)} />
-                                                <button onClick={() => {
-                                                    const newId = Math.random().toString(36).substring(2, 8).toUpperCase();
-                                                    const updated = [...groups, { id: newId, name: groupInput, members: [{email: session.user.email, habitsDone: history[dateKey]?.length || 0}] }];
-                                                    setGroups(updated); setGroupInput(''); sync({groups: updated});
-                                                }} className="bg-indigo-600 text-white px-6 rounded-2xl font-bold text-xs">CREATE</button>
-                                            </div>
+                            <div className="bg-indigo-600 p-6 rounded-[2.5rem] text-white">
+                                <h3 className="text-xs font-black uppercase opacity-60">My Groups</h3>
+                                <div className="mt-4 space-y-2">
+                                    {groups.map(g => (
+                                        <div key={g.id} className="flex justify-between items-center p-4 bg-white/10 rounded-2xl">
+                                            <span className="font-bold">{g.name}</span>
+                                            <span className="text-[10px] font-mono bg-white/20 px-2 py-1 rounded">{g.invite_code}</span>
                                         </div>
-                                    </div>
-                                    <div className="space-y-3">
-                                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-2">My Groups</h3>
-                                        {groups.map(g => (
-                                            <div key={g.id} onClick={() => setActiveGroupId(g.id)} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex justify-between items-center cursor-pointer active:scale-95 transition-transform">
-                                                <div><p className="font-bold text-slate-700">{g.name}</p><p className="text-[10px] font-black text-indigo-400 uppercase">ID: {g.id}</p></div>
-                                                <div className="text-slate-300 font-bold">→</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </>
-                            ) : (
-                                <div className="space-y-4 animate-view">
-                                    <button onClick={() => setActiveGroupId(null)} className="mb-2 bg-white w-10 h-10 rounded-full shadow-sm border border-slate-100 flex items-center justify-center font-bold text-indigo-600">←</button>
-                                    <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
-                                        <div className="p-4 border-b border-slate-100 bg-slate-50"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Group Activity Feed</span></div>
-                                        <div className="p-2 space-y-1">
-                                            {groups.find(g => g.id === activeGroupId)?.members.map((m, idx) => (
-                                                <div key={idx} className="flex items-center justify-between p-4 rounded-3xl">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-xs font-bold text-indigo-600">{m.email[0].toUpperCase()}</div>
-                                                        <div><p className="text-sm font-bold text-slate-700">{m.email === session.user.email ? "You" : m.email.split('@')[0]}</p></div>
-                                                    </div>
-                                                    <div className="flex gap-1">{Array.from({ length: 3 }).map((_, i) => <div key={i} className={`w-2 h-2 rounded-full ${i < m.habitsDone ? 'bg-green-500' : 'bg-slate-200'}`}></div>)}</div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
+                                    ))}
                                 </div>
-                            )}
+                            </div>
                         </div>
                     )}
 
                     <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
                         <div className="bg-white/95 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
                             {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => { setPage(p); setActiveGroupId(null); }} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>
+                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
                                     {p.toUpperCase()}
                                 </button>
                             ))}
