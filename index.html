@@ -14,6 +14,7 @@
         .no-select { -webkit-tap-highlight-color: transparent; user-select: none; }
         .auth-slide { transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
         .fade-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body class="bg-white text-slate-900 font-sans no-select overflow-x-hidden">
@@ -35,7 +36,7 @@
                 e.preventDefault();
                 setMsg({ text: 'Verifying...', type: 'info' });
                 
-                const { data, error } = isSignUp 
+                const { error } = isSignUp 
                     ? await supabaseClient.auth.signUp({
                         email: formData.email,
                         password: formData.password,
@@ -57,7 +58,6 @@
                     </div>
 
                     <div className="auth-slide flex w-[200%] h-full pt-12" style={{ transform: isSignUp ? 'translateX(-50%)' : 'translateX(0)' }}>
-                        {/* LOGIN */}
                         <div className="w-1/2 px-8 space-y-4">
                             <h2 className="text-xs font-black text-slate-300 uppercase tracking-widest">Sign In</h2>
                             <form onSubmit={handleAuth} className="space-y-3">
@@ -68,7 +68,6 @@
                             <button onClick={() => setIsSignUp(true)} className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Create Account</button>
                         </div>
 
-                        {/* SIGNUP */}
                         <div className="w-1/2 px-8 space-y-4">
                             <h2 className="text-xs font-black text-slate-300 uppercase tracking-widest">New Profile</h2>
                             <form onSubmit={handleAuth} className="space-y-3">
@@ -93,8 +92,11 @@
             const [session, setSession] = useState(null);
             const [profile, setProfile] = useState({ first_name: '', last_name: '' });
             const [goals, setGoals] = useState([]);
+            const [logs, setLogs] = useState([]);
             const [isMenuOpen, setIsMenuOpen] = useState(false);
             const [isUpdating, setIsUpdating] = useState(false);
+            
+            const todayKey = new Date().toISOString().split('T')[0];
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session: s } }) => setSession(s));
@@ -104,98 +106,19 @@
 
             const fetchAll = async () => {
                 if (!session) return;
-                const [g, p] = await Promise.all([
+                const [g, l, p] = await Promise.all([
                     supabaseClient.from('goals').select('*').eq('user_id', session.user.id).is('deleted_at', null),
+                    supabaseClient.from('logs').select('*').eq('user_id', session.user.id),
                     supabaseClient.from('profiles').select('first_name, last_name').eq('id', session.user.id).single()
                 ]);
                 setGoals(g.data || []);
+                setLogs(l.data || []);
                 if(p.data) setProfile(p.data);
             };
 
             useEffect(() => { fetchAll(); }, [session]);
 
-            const updateProfile = async (e) => {
-                e.preventDefault();
-                setIsUpdating(true);
-                const { error } = await supabaseClient.from('profiles').update({
-                    first_name: profile.first_name,
-                    last_name: profile.last_name
-                }).eq('id', session.user.id);
-                
-                setIsUpdating(false);
-                if (!error) {
-                    alert('Profile updated!');
-                    setCurrentPage('daily');
-                }
-            };
-
-            if (!session) return <AuthScreen />;
-
-            return (
-                <div className="max-w-md mx-auto min-h-screen bg-slate-50 flex flex-col relative overflow-hidden">
-                    
-                    {/* MENU */}
-                    <div className={`fixed inset-0 z-[60] bg-slate-900/10 backdrop-blur-sm transition-opacity ${isMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsMenuOpen(false)}>
-                        <div className={`absolute right-0 top-0 h-full w-64 bg-white shadow-2xl transition-transform duration-300 p-8 ${isMenuOpen ? 'translate-x-0' : 'translate-x-full'}`} onClick={e => e.stopPropagation()}>
-                            <h2 className="text-xl font-black italic text-indigo-600 mb-1 uppercase tracking-tighter">Hi, {profile.first_name || 'Friend'}</h2>
-                            <div className="mt-10 space-y-6">
-                                <button onClick={() => { setCurrentPage('settings'); setIsMenuOpen(false); }} className="block font-bold text-slate-700">Account Settings</button>
-                                <button onClick={() => supabaseClient.auth.signOut()} className="block font-bold text-red-500">Log Out</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <header className="flex justify-between items-center p-8 pt-10">
-                        <h1 className="text-4xl font-black italic text-indigo-600 tracking-tighter">Journally</h1>
-                        <button onClick={() => setIsMenuOpen(true)} className="space-y-1.5">
-                            <div className="w-7 h-1 bg-indigo-600 rounded-full"></div>
-                            <div className="w-4 h-1 bg-indigo-600 rounded-full ml-auto"></div>
-                        </button>
-                    </header>
-
-                    <main className="flex-grow p-8 pt-0 fade-in">
-                        {currentPage === 'daily' && (
-                            <div className="space-y-4">
-                                {goals.map(g => (
-                                    <div key={g.id} className="bg-white p-6 rounded-3xl flex justify-between items-center border border-slate-100 shadow-sm">
-                                        <span className="font-bold text-slate-700">{g.name}</span>
-                                        <div className="w-6 h-6 rounded-full border-2 border-slate-200"></div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {currentPage === 'settings' && (
-                            <div className="space-y-6">
-                                <h2 className="text-sm font-black text-slate-300 uppercase tracking-widest">Update Settings</h2>
-                                <form onSubmit={updateProfile} className="space-y-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black text-slate-400 uppercase ml-4">First Name</label>
-                                        <input type="text" value={profile.first_name} className="w-full p-5 rounded-3xl bg-white border border-slate-100 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setProfile({...profile, first_name: e.target.value})} required />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black text-slate-400 uppercase ml-4">Last Name</label>
-                                        <input type="text" value={profile.last_name} className="w-full p-5 rounded-3xl bg-white border border-slate-100 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setProfile({...profile, last_name: e.target.value})} required />
-                                    </div>
-                                    <button disabled={isUpdating} className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-xl active:scale-95 transition-all">
-                                        {isUpdating ? 'SAVING...' : 'SAVE CHANGES'}
-                                    </button>
-                                    <button type="button" onClick={() => setCurrentPage('daily')} className="w-full text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Cancel</button>
-                                </form>
-                            </div>
-                        )}
-                    </main>
-
-                    <nav className="fixed bottom-8 left-8 right-8 bg-white/90 backdrop-blur-md p-2 rounded-full shadow-2xl flex gap-2">
-                        <button onClick={() => setCurrentPage('daily')} className={`flex-1 py-4 rounded-full font-black text-[10px] ${currentPage === 'daily' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>DAILY</button>
-                        <button onClick={() => setCurrentPage('summary')} className={`flex-1 py-4 rounded-full font-black text-[10px] ${currentPage === 'summary' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>SUMMARY</button>
-                    </nav>
-                </div>
-            );
-        }
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+            const toggleHabit = async (goalId) => {
+                const existingLog = logs.find(l => l.goal_id === goalId && l.logged_date === todayKey);
+                if (existingLog) {
+                    await supabase
