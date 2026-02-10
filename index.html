@@ -3,119 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Persistence Fix</title>
+    <title>Journally</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        /* Smooth transition between pages */
+        .page-fade { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        /* Remove mobile tap highlight */
+        * { -webkit-tap-highlight-color: transparent; }
+    </style>
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect } = React;
 
+        // Configuration
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         function App() {
+            const [currentPage, setCurrentPage] = useState('daily');
             const [session, setSession] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [goals, setGoals] = useState([]);
-            const [logs, setLogs] = useState([]);
-            const [viewDate, setViewDate] = useState(new Date());
 
-            const dateKey = viewDate.toISOString().split('T')[0];
-
-            // --- THE FIX: The refresh function now accepts a 'passedSession' ---
-            const refreshData = async (activeSession) => {
-                const user = activeSession?.user || session?.user;
-                if (!user) return;
-
-                // Fetch data only when we have a confirmed user ID
-                const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).is('deleted_at', null);
-                const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id).eq('logged_date', dateKey);
-                
-                setGoals(g || []);
-                setLogs(l || []);
-            };
-
-            // --- THE GATEKEEPER: This runs once on page load ---
+            // Handle Auth Persistence
             useEffect(() => {
-                const initAuth = async () => {
-                    const { data: { session: s } } = await supabaseClient.auth.getSession();
-                    if (s) {
-                        setSession(s);
-                        // We pass 's' directly here to ensure we don't wait for the state to update
-                        await refreshData(s);
-                    }
+                supabaseClient.auth.getSession().then(({ data: { session: s } }) => {
+                    setSession(s);
                     setLoading(false);
-                };
-                initAuth();
-            }, [dateKey]); // Refetches if you change the date
-
-            const toggleLog = async (goalId) => {
-                const existing = logs.find(l => l.goal_id === goalId);
-                if (existing) {
-                    await supabaseClient.from('logs').delete().eq('id', existing.id);
-                } else {
-                    await supabaseClient.from('logs').insert([{ goal_id: goalId, user_id: session.user.id, logged_date: dateKey }]);
-                }
-                refreshData();
-            };
-
-            const addHabit = async () => {
-                const name = prompt("New habit name:");
-                if (!name) return;
-                await supabaseClient.from('goals').insert([{ name, user_id: session.user.id }]);
-                refreshData();
-            };
+                });
+            }, []);
 
             if (loading) return (
-                <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse text-xs tracking-widest">
-                    RESTORING SESSION...
+                <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse uppercase tracking-widest text-xs">
+                    Initializing Journally...
                 </div>
             );
 
-            if (!session) return <div className="p-20 text-center font-bold">Please sign in to view your habits.</div>;
-
             return (
-                <div className="max-w-md mx-auto p-6 space-y-6">
-                    <header className="flex justify-between items-center">
-                        <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-                        <span className="text-[10px] font-bold text-green-500 bg-green-50 px-2 py-1 rounded">SECURE</span>
+                <div className="max-w-md mx-auto min-h-screen flex flex-col relative p-6">
+                    {/* TOP HEADER */}
+                    <header className="mb-10 pt-4">
+                        <h1 className="text-4xl font-black italic text-indigo-600 tracking-tighter">Journally</h1>
+                        <div className="h-1 w-12 bg-indigo-600 rounded-full mt-1"></div>
                     </header>
 
-                    {/* Simple Date Control */}
-                    <div className="flex justify-between items-center bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
-                        <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="font-bold text-indigo-600">←</button>
-                        <span className="font-bold">{viewDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                        <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="font-bold text-indigo-600">→</button>
-                    </div>
+                    {/* MAIN CONTENT AREA */}
+                    <main className="flex-grow page-fade">
+                        {currentPage === 'daily' ? (
+                            <section>
+                                <h2 className="text-xl font-bold text-slate-800 mb-2">Daily Sheet</h2>
+                                <p className="text-slate-500 text-sm">Your habits for today go here.</p>
+                                {/* We will add the list, swipe-to-delete, and edit features here next */}
+                            </section>
+                        ) : (
+                            <section>
+                                <h2 className="text-xl font-bold text-slate-800 mb-2">Monthly Summary</h2>
+                                <p className="text-slate-500 text-sm">Your progress visuals go here.</p>
+                                {/* We will add the habit dropdown and monthly calendar here next */}
+                            </section>
+                        )}
+                    </main>
 
-                    <div className="space-y-3">
-                        {goals.map(g => (
-                            <div 
-                                key={g.id} 
-                                onClick={() => toggleLog(g.id)}
-                                className="p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center cursor-pointer shadow-sm hover:border-indigo-100 transition-all"
+                    {/* BOTTOM NAVIGATION */}
+                    <nav className="fixed bottom-8 left-6 right-6 flex justify-center">
+                        <div className="bg-white border border-slate-200 p-2 rounded-full shadow-2xl flex gap-2 w-full max-w-[300px]">
+                            <button 
+                                onClick={() => setCurrentPage('daily')}
+                                className={`flex-1 py-4 rounded-full font-black text-[10px] tracking-[0.2em] transition-all duration-300 ${currentPage === 'daily' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-400 hover:bg-slate-50'}`}
                             >
-                                <span className="font-bold text-slate-700">{g.name}</span>
-                                {logs.some(l => l.goal_id === g.id) && (
-                                    <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px]">✓</div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-
-                    <button 
-                        onClick={addHabit}
-                        className="w-full py-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold hover:bg-white hover:text-indigo-500 transition-all"
-                    >
-                        + Add Habit
-                    </button>
+                                DAILY
+                            </button>
+                            <button 
+                                onClick={() => setCurrentPage('summary')}
+                                className={`flex-1 py-4 rounded-full font-black text-[10px] tracking-[0.2em] transition-all duration-300 ${currentPage === 'summary' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-400 hover:bg-slate-50'}`}
+                            >
+                                SUMMARY
+                            </button>
+                        </div>
+                    </nav>
                 </div>
             );
         }
