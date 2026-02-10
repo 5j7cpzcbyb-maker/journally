@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Journally - Swipe Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Journally - Full Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -12,13 +12,11 @@
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes slideInRight { from { transform: translateX(-20%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        @keyframes slideInLeft { from { transform: translateX(20%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .animate-edit { animation: slideInRight 0.2s ease-out forwards; }
-        .animate-del { animation: slideInLeft 0.2s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans select-none">
+<body class="bg-slate-50 text-slate-900 font-sans select-none overflow-x-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -33,16 +31,15 @@
             const [page, setPage] = useState('daily');
             const [goals, setGoals] = useState([]);
             const [history, setHistory] = useState({});
-            const [goalGroups, setGoalGroups] = useState({});
-            const [groups, setGroups] = useState([]);
+            const [viewDate, setViewDate] = useState(new Date());
             const [editingIndex, setEditingIndex] = useState(null);
             const [deletingIndex, setDeletingIndex] = useState(null);
             const [editValue, setEditValue] = useState('');
             const [touchStart, setTouchStart] = useState(0);
-            const [status, setStatus] = useState('');
             const [selectedSummaryGoal, setSelectedSummaryGoal] = useState(null);
+            const [status, setStatus] = useState('');
 
-            const dateKey = new Date().toISOString().split('T')[0];
+            const dateKey = viewDate.toISOString().split('T')[0];
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => {
@@ -57,8 +54,6 @@
                 if (data) {
                     setGoals(data.content.goals || []);
                     setHistory(data.content.history || {});
-                    setGoalGroups(data.content.goalGroups || {});
-                    setGroups(data.content.groups || []);
                     if (data.content.goals?.length > 0) setSelectedSummaryGoal(data.content.goals[0]);
                 }
                 setStatus('');
@@ -68,26 +63,16 @@
                 if (!session) return;
                 const content = {
                     goals: updated.goals || goals,
-                    history: updated.history || history,
-                    goalGroups: updated.goalGroups || goalGroups,
-                    groups: updated.groups || groups
+                    history: updated.history || history
                 };
                 await supabaseClient.from('journally_data').upsert({ user_id: session.user.id, content });
             }
 
             const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
             const handleTouchEnd = (e, index, goalName) => {
-                const touchEnd = e.changedTouches[0].clientX;
-                const distance = touchStart - touchEnd;
-                
-                if (distance < -60) { // Swipe Right -> Edit
-                    setDeletingIndex(null);
-                    setEditingIndex(index);
-                    setEditValue(goalName);
-                } else if (distance > 60) { // Swipe Left -> Delete
-                    setEditingIndex(null);
-                    setDeletingIndex(index);
-                }
+                const distance = touchStart - e.changedTouches[0].clientX;
+                if (distance < -70) { setEditingIndex(index); setEditValue(goalName); setDeletingIndex(null); }
+                else if (distance > 70) { setDeletingIndex(index); setEditingIndex(null); }
             };
 
             const toggleGoal = (goal) => {
@@ -99,14 +84,6 @@
                 sync({ history: updatedHistory });
             };
 
-            const saveEdit = (index) => {
-                const updated = [...goals];
-                updated[index] = editValue;
-                setGoals(updated);
-                setEditingIndex(null);
-                sync({ goals: updated });
-            };
-
             const confirmDelete = (index) => {
                 const updated = goals.filter((_, i) => i !== index);
                 setGoals(updated);
@@ -114,83 +91,109 @@
                 sync({ goals: updated });
             };
 
-            const calendarStats = useMemo(() => {
-                if (!selectedSummaryGoal) return null;
-                const now = new Date();
-                const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-                let count = 0;
-                for (let i = 1; i <= daysInMonth; i++) {
-                    const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
-                    if (history[key]?.includes(selectedSummaryGoal)) count++;
-                }
-                return { count, percent: Math.round((count/daysInMonth)*100) };
-            }, [selectedSummaryGoal, history]);
+            const getCalendarDays = () => {
+                const year = viewDate.getFullYear();
+                const month = viewDate.getMonth();
+                const firstDay = new Date(year, month, 1).getDay();
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                return { firstDay, daysInMonth, year, month };
+            };
 
             if (!session) return <div className="p-20 text-center font-bold text-indigo-600">Loading...</div>;
 
             return (
                 <div className="max-w-md mx-auto p-6 pb-40">
-                    <header className="flex justify-between items-center mb-8">
+                    <header className="flex justify-between items-center mb-6">
                         <h1 className="text-2xl font-black text-indigo-600 italic">Journally</h1>
-                        <span className="text-[10px] font-bold text-slate-300 uppercase">{status || 'Synced'}</span>
+                        <span className="text-[10px] font-bold bg-indigo-50 px-2 py-1 rounded text-indigo-400 uppercase tracking-widest">{status || 'Live'}</span>
                     </header>
 
                     {page === 'daily' && (
-                        <div className="space-y-3">
-                            {goals.map((g, i) => (
-                                <div key={i} className="relative overflow-hidden rounded-3xl" onTouchStart={handleTouchStart} onTouchEnd={(e) => handleTouchEnd(e, i, g)}>
-                                    {editingIndex === i ? (
-                                        <div className="bg-slate-100 p-4 flex gap-2 animate-edit">
-                                            <input autoFocus className="flex-1 bg-white px-4 py-2 rounded-xl font-bold outline-none" value={editValue} onChange={e => setEditValue(e.target.value)} />
-                                            <button onClick={() => saveEdit(i)} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs">Save</button>
-                                        </div>
-                                    ) : deletingIndex === i ? (
-                                        <div className="bg-red-50 p-4 flex justify-between items-center animate-del">
-                                            <span className="text-red-600 font-bold text-sm pl-2">Delete habit?</span>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => confirmDelete(i)} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Delete</button>
-                                                <button onClick={() => setDeletingIndex(null)} className="bg-white text-slate-400 px-4 py-2 rounded-xl border font-bold text-xs">Cancel</button>
+                        <div className="animate-fadeIn">
+                            {/* Restored Date Nav */}
+                            <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
+                                <p className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
+                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
+                            </div>
+
+                            <div className="space-y-3">
+                                {goals.map((g, i) => (
+                                    <div key={i} className="relative overflow-hidden rounded-3xl" onTouchStart={handleTouchStart} onTouchEnd={(e) => handleTouchEnd(e, i, g)}>
+                                        {editingIndex === i ? (
+                                            <div className="bg-slate-100 p-4 flex gap-2">
+                                                <input autoFocus className="flex-1 bg-white px-4 py-2 rounded-xl font-bold outline-none" value={editValue} onChange={e => setEditValue(e.target.value)} />
+                                                <button onClick={() => { const u = [...goals]; u[i] = editValue; setGoals(u); setEditingIndex(null); sync({goals: u}); }} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs">Save</button>
                                             </div>
-                                        </div>
-                                    ) : (
-                                        <div onClick={() => toggleGoal(g)} className={`p-6 flex justify-between items-center transition-all ${history[dateKey]?.includes(g) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white border-2 border-slate-100 text-slate-500'}`}>
-                                            <span className="font-bold text-lg">{g}</span>
-                                            {history[dateKey]?.includes(g) && <span className="text-2xl font-bold">✓</span>}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                            <p className="text-center text-[9px] text-slate-400 font-bold uppercase mt-6 tracking-widest">Swipe Right Edit • Swipe Left Delete</p>
+                                        ) : deletingIndex === i ? (
+                                            <div className="bg-red-50 p-4 flex justify-between items-center">
+                                                <span className="text-red-600 font-bold text-sm pl-2">Delete?</span>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => confirmDelete(i)} className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold text-xs">Yes</button>
+                                                    <button onClick={() => setDeletingIndex(null)} className="bg-white text-slate-400 px-4 py-2 rounded-xl border font-bold text-xs">No</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div onClick={() => toggleGoal(g)} className={`p-6 flex justify-between items-center transition-all ${history[dateKey]?.includes(g) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white border-2 border-slate-100 text-slate-500'}`}>
+                                                <span className="font-bold text-lg">{g}</span>
+                                                {history[dateKey]?.includes(g) && <span className="text-2xl font-bold">✓</span>}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
 
-                    {page === 'summary' && selectedSummaryGoal && (
+                    {page === 'summary' && (
                         <div className="animate-fadeIn space-y-6">
                             <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
                                 {goals.map((g, i) => (
-                                    <button key={i} onClick={() => setSelectedSummaryGoal(g)} className={`flex-shrink-0 px-6 py-2 rounded-full text-xs font-bold border-2 ${selectedSummaryGoal === g ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-100 text-slate-400'}`}>
+                                    <button key={i} onClick={() => setSelectedSummaryGoal(g)} className={`flex-shrink-0 px-6 py-2 rounded-full text-xs font-bold border-2 transition-all ${selectedSummaryGoal === g ? 'bg-indigo-600 border-indigo-600 text-white scale-105' : 'bg-white border-slate-100 text-slate-400'}`}>
                                         {g}
                                     </button>
                                 ))}
                             </div>
-                            <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl relative overflow-hidden">
-                                <p className="text-[10px] font-bold opacity-60 uppercase mb-1">Monthly Score</p>
-                                <h2 className="text-3xl font-black mb-4">{calendarStats.percent}%</h2>
-                                <p className="text-xs opacity-80">You've completed <b>{selectedSummaryGoal}</b> {calendarStats.count} times this month.</p>
-                            </div>
+
+                            {selectedSummaryGoal && (
+                                <div className="space-y-4">
+                                    <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-xl relative">
+                                        <p className="text-[10px] font-bold opacity-60 uppercase mb-1">Monthly Progress</p>
+                                        <h2 className="text-3xl font-black">{selectedSummaryGoal}</h2>
+                                    </div>
+
+                                    {/* Restored Calendar Visual */}
+                                    <div className="bg-white p-6 rounded-[3rem] shadow-sm border border-slate-100">
+                                        <div className="grid grid-cols-7 gap-2 text-center">
+                                            {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-slate-300 mb-2">{d}</div>)}
+                                            {Array.from({ length: getCalendarDays().firstDay }).map((_, i) => <div key={i} />)}
+                                            {Array.from({ length: getCalendarDays().daysInMonth }).map((_, i) => {
+                                                const day = i + 1;
+                                                const checkKey = `${getCalendarDays().year}-${String(getCalendarDays().month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                                const isDone = history[checkKey]?.includes(selectedSummaryGoal);
+                                                return (
+                                                    <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-xs font-bold transition-all ${isDone ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>
+                                                        {day}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
                     {page === 'social' && (
-                        <div className="text-center py-20 bg-white rounded-[3rem] border border-dashed text-slate-400 font-bold text-sm">
-                            Social groups feature active.<br/>Add friends to begin.
+                        <div className="animate-fadeIn text-center py-20 bg-white rounded-[3rem] border-2 border-dashed border-slate-100 text-slate-400 font-bold text-sm">
+                            Social Hub coming soon...
                         </div>
                     )}
 
                     <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
                         <div className="bg-white/95 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
                             {['daily', 'summary', 'social'].map(p => (
-                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>
+                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
                                     {p.toUpperCase()}
                                 </button>
                             ))}
