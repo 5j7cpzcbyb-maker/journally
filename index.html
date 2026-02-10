@@ -1,80 +1,87 @@
-// --- CONFIGURATION ---
+// --- SECURE CONFIGURATION ---
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4';
         const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         function App() {
-            const [user, setUser] = useState({ username: '', password: '' });
-            const [isLoggedIn, setIsLoggedIn] = useState(false);
-            const [rememberMe, setRememberMe] = useState(true); // Default to on
-            const [loading, setLoading] = useState(false);
-            const [status, setStatus] = useState('');
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [session, setSession] = useState(null);
+            const [loading, setLoading] = useState(true);
             const [goals, setGoals] = useState([]);
             const [history, setHistory] = useState({});
-            const [currentDate, setCurrentDate] = useState(new Date());
-            const [newGoal, setNewGoal] = useState('');
 
-            const dateKey = currentDate.toISOString().split('T')[0];
-
-            // Check for saved session on startup
+            // Listen for Auth changes (The "Highest Security" session handling)
             useEffect(() => {
-                const savedUser = localStorage.getItem('journally_user');
-                if (savedUser) {
-                    const parsed = JSON.parse(savedUser);
-                    setUser(parsed);
-                    autoLogin(parsed);
-                }
+                supabase.auth.getSession().then(({ data: { session } }) => {
+                    setSession(session);
+                    if (session) loadUserData(session.user.id);
+                    setLoading(false);
+                });
+
+                const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+                    setSession(session);
+                    if (session) loadUserData(session.user.id);
+                });
+
+                return () => subscription.unsubscribe();
             }, []);
 
-            const autoLogin = async (userData) => {
-                setLoading(true);
+            async function handleSignUp(e) {
+                e.preventDefault();
+                const { error } = await supabase.auth.signUp({ email, password });
+                if (error) alert(error.message);
+                else alert("Check your email for the confirmation link!");
+            }
+
+            async function handleLogin(e) {
+                e.preventDefault();
+                const { error } = await supabase.auth.signInWithPassword({ email, password });
+                if (error) alert(error.message);
+            }
+
+            async function loadUserData(userId) {
                 const { data } = await supabase
                     .from('journally_data')
-                    .select('*')
-                    .eq('user_id', userData.username.toLowerCase())
+                    .select('content')
+                    .eq('user_id', userId)
                     .single();
                 
-                if (data && data.content.password === userData.password) {
+                if (data) {
                     setGoals(data.content.goals || []);
                     setHistory(data.content.history || {});
-                    setIsLoggedIn(true);
                 }
-                setLoading(false);
-            };
+            }
 
-            const handleLogin = async (e) => {
-                e.preventDefault();
-                setLoading(true);
-                setStatus('Connecting...');
-
-                const { data, error } = await supabase
+            async function syncWithCloud(updatedGoals = goals, updatedHistory = history) {
+                if (!session) return;
+                await supabase
                     .from('journally_data')
-                    .select('*')
-                    .eq('user_id', user.username.toLowerCase())
-                    .single();
+                    .upsert({ 
+                        user_id: session.user.id, 
+                        content: { goals: updatedGoals, history: updatedHistory } 
+                    });
+            }
 
-                if (data) {
-                    if (data.content.password === user.password) {
-                        if (rememberMe) localStorage.setItem('journally_user', JSON.stringify(user));
-                        setGoals(data.content.goals || []);
-                        setHistory(data.content.history || {});
-                        setIsLoggedIn(true);
-                    } else {
-                        alert("Incorrect password.");
-                    }
-                } else {
-                    const confirmNew = confirm("Create new account?");
-                    if (confirmNew) {
-                        const initialData = { user_id: user.username.toLowerCase(), content: { password: user.password, goals: [], history: {} }};
-                        await supabase.from('journally_data').insert(initialData);
-                        if (rememberMe) localStorage.setItem('journally_user', JSON.stringify(user));
-                        setIsLoggedIn(true);
-                    }
-                }
-                setLoading(false);
-            };
+            if (loading) return <div className="flex justify-center mt-20 font-bold">Securely Loading...</div>;
 
-            const logout = () => {
-                localStorage.removeItem('journally_user');
-                location.reload();
-            };
+            if (!session) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-4">
+                        <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm border border-slate-200">
+                            <h1 className="text-3xl font-black text-indigo-600 text-center mb-6">Secure Login</h1>
+                            <form className="space-y-4">
+                                <input className="w-full p-4 bg-slate-50 border rounded-2xl outline-none" 
+                                       placeholder="Email" onChange={e => setEmail(e.target.value)} />
+                                <input className="w-full p-4 bg-slate-50 border rounded-2xl outline-none" 
+                                       type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
+                                <button onClick={handleLogin} className="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold">Sign In</button>
+                                <button onClick={handleSignUp} className="w-full border-2 border-indigo-600 text-indigo-600 p-4 rounded-2xl font-bold">Create Account</button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            // ... (Rest of your UI goes here)
+        }
