@@ -12,7 +12,7 @@
     <style>
         .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
         .no-select { -webkit-tap-highlight-color: transparent; user-select: none; }
-        .auth-slide { transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+        .auth-container { transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
         .fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
@@ -36,68 +36,69 @@
                 e.preventDefault();
                 setMsg({ text: 'Syncing...', type: 'info' });
                 
+                let result;
                 if (isSignUp) {
-                    const { data: authData, error: authError } = await supabaseClient.auth.signUp({
+                    result = await supabaseClient.auth.signUp({
                         email: formData.email,
                         password: formData.password,
                         options: { data: { full_name: formData.name } }
                     });
-
-                    if (authError) {
-                        setMsg({ text: authError.message, type: 'error' });
-                        return;
-                    }
-
-                    if (authData.user) {
-                        await supabaseClient.from('profiles').insert([{ 
-                            id: authData.user.id, 
-                            full_name: formData.name 
-                        }]);
-                    }
-                    setMsg({ text: 'Success! Please verify your email.', type: 'success' });
                 } else {
-                    const { error } = await supabaseClient.signInWithPassword({
+                    result = await supabaseClient.auth.signInWithPassword({
                         email: formData.email,
                         password: formData.password
                     });
-                    if (error) setMsg({ text: error.message, type: 'error' });
                 }
+                
+                if (result.error) setMsg({ text: result.error.message, type: 'error' });
+                else if (isSignUp) setMsg({ text: 'Success! Please verify your email.', type: 'success' });
+            };
+
+            const toggleView = () => {
+                setMsg({ text: '', type: '' });
+                setIsSignUp(!isSignUp);
             };
 
             return (
                 <div className="min-h-screen w-full relative overflow-hidden bg-white">
+                    {/* Header Branding */}
                     <div className="pt-20 px-8">
                         <h1 className="text-6xl font-black italic text-indigo-600 tracking-tighter leading-none">Journally</h1>
                         <div className="h-2 w-16 bg-indigo-600 rounded-full mt-2"></div>
                     </div>
 
-                    <div className="auth-slide flex w-[200%] h-full pt-12" style={{ transform: isSignUp ? 'translateX(-50%)' : 'translateX(0)' }}>
-                        {/* LOG IN */}
+                    <div 
+                        className="auth-container flex w-[200%] h-full pt-12"
+                        style={{ transform: isSignUp ? 'translateX(-50%)' : 'translateX(0)' }}
+                    >
+                        {/* LOG IN VIEW */}
                         <div className="w-1/2 px-8 flex flex-col">
                             <h2 className="text-sm font-black text-slate-300 uppercase tracking-widest mb-8">Welcome Back</h2>
                             <form onSubmit={handleAuth} className="space-y-4">
-                                <input type="email" placeholder="Email" className="w-full p-5 rounded-3xl bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, email: e.target.value})} required />
-                                <input type="password" placeholder="Password" className="w-full p-5 rounded-3xl bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, password: e.target.value})} required />
+                                <input type="email" placeholder="Email" className="w-full p-5 rounded-3xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, email: e.target.value})} required />
+                                <input type="password" placeholder="Password" className="w-full p-5 rounded-3xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, password: e.target.value})} required />
                                 <button className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-xl shadow-indigo-100 active:scale-95 transition-all">ENTER</button>
                             </form>
-                            <button onClick={() => setIsSignUp(true)} className="mt-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">New here? <span className="text-indigo-500 underline">Create Account</span></button>
+                            <button onClick={toggleView} className="mt-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">New here? <span className="text-indigo-500">Create Account</span></button>
                         </div>
 
-                        {/* SIGN UP */}
+                        {/* SIGN UP VIEW */}
                         <div className="w-1/2 px-8 flex flex-col">
                             <h2 className="text-sm font-black text-slate-300 uppercase tracking-widest mb-8">Join Journally</h2>
                             <form onSubmit={handleAuth} className="space-y-4">
-                                <input type="text" placeholder="Full Name" className="w-full p-5 rounded-3xl bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, name: e.target.value})} required />
-                                <input type="email" placeholder="Email" className="w-full p-5 rounded-3xl bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, email: e.target.value})} required />
-                                <input type="password" placeholder="Password (6+ chars)" className="w-full p-5 rounded-3xl bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, password: e.target.value})} required />
+                                <input type="text" placeholder="Full Name" className="w-full p-5 rounded-3xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, name: e.target.value})} required />
+                                <input type="email" placeholder="Email" className="w-full p-5 rounded-3xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, email: e.target.value})} required />
+                                <input type="password" placeholder="Password (6+ chars)" className="w-full p-5 rounded-3xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-indigo-100 transition-all" onChange={e => setFormData({...formData, password: e.target.value})} required />
                                 <button className="w-full py-5 bg-indigo-600 text-white font-black rounded-3xl shadow-xl shadow-indigo-100 active:scale-95 transition-all">START JOURNEY</button>
                             </form>
-                            <button onClick={() => setIsSignUp(false)} className="mt-8 text-[11px] font-black text-slate-400 uppercase tracking-widest text-indigo-500 underline">Back to Log In</button>
+                            <button onClick={toggleView} className="mt-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">Back to <span className="text-indigo-500">Log In</span></button>
                         </div>
                     </div>
 
                     {msg.text && (
-                        <div className={`fixed bottom-10 left-8 right-8 p-5 rounded-3xl text-center text-xs font-bold fade-in shadow-lg ${msg.type === 'error' ? 'bg-red-500 text-white' : 'bg-indigo-600 text-white'}`}>
+                        <div className={`fixed bottom-10 left-8 right-8 p-5 rounded-3xl text-center text-xs font-bold fade-in shadow-lg ${
+                            msg.type === 'error' ? 'bg-red-500 text-white' : 'bg-indigo-600 text-white'
+                        }`}>
                             {msg.text}
                         </div>
                     )}
@@ -108,7 +109,6 @@
         function App() {
             const [currentPage, setCurrentPage] = useState('daily');
             const [session, setSession] = useState(null);
-            const [profile, setProfile] = useState(null);
             const [loading, setLoading] = useState(true);
             const [goals, setGoals] = useState([]);
             const [logs, setLogs] = useState([]);
@@ -124,6 +124,7 @@
                     if (s) fetchData(s);
                     setLoading(false);
                 });
+                
                 const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, s) => {
                     setSession(s);
                     if (s) fetchData(s);
@@ -134,10 +135,8 @@
             const fetchData = async (u) => {
                 const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', u.user.id).is('deleted_at', null);
                 const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', u.user.id);
-                const { data: p } = await supabaseClient.from('profiles').select('full_name').eq('id', u.user.id).single();
                 setGoals(g || []);
                 setLogs(l || []);
-                setProfile(p);
             };
 
             const toggleHabit = async (id) => {
@@ -154,7 +153,7 @@
             const calendarDays = useMemo(() => {
                 const d = new Date();
                 const first = new Date(d.getFullYear(), d.getMonth(), 1).getDay();
-                const total = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+                const total = new Date(d.getFullYear(), d.getMonth + 1, 0).getDate();
                 return [...Array(first).fill(null), ...Array.from({length: total}, (_, i) => i + 1)];
             }, []);
 
@@ -164,13 +163,11 @@
             return (
                 <div className="max-w-md mx-auto min-h-screen flex flex-col relative bg-slate-50 overflow-hidden" onClick={() => {setSwipedId(null); setIsMenuOpen(false);}}>
                     
-                    {/* MENU OVERLAY */}
+                    {/* MENU */}
                     <div className={`fixed inset-0 z-[60] bg-slate-900/10 backdrop-blur-sm transition-opacity ${isMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                         <div className={`absolute right-0 top-0 h-full w-64 bg-white shadow-2xl transition-transform duration-300 p-8 ${isMenuOpen ? 'translate-x-0' : 'translate-x-full'}`} onClick={e => e.stopPropagation()}>
-                            <h2 className="text-xl font-black italic text-indigo-600 mb-1 tracking-tighter">HELLO,</h2>
-                            <p className="text-slate-400 font-bold text-[10px] mb-10 uppercase tracking-widest">
-                                {profile?.full_name || session.user.user_metadata.full_name || 'Member'}
-                            </p>
+                            <h2 className="text-xl font-black italic text-indigo-600 mb-4 tracking-tighter">HELLO,</h2>
+                            <p className="text-slate-400 font-bold text-[10px] mb-10 uppercase tracking-widest">{session.user.user_metadata.full_name || 'Friend'}</p>
                             <button onClick={() => setIsMenuOpen(false)} className="block w-full text-left font-bold text-slate-700 mb-6">Settings</button>
                             <button onClick={() => supabaseClient.auth.signOut()} className="block w-full text-left font-bold text-red-500">Log Out</button>
                         </div>
@@ -180,9 +177,9 @@
                     <header className="flex justify-between items-center p-6 pt-10">
                         <h1 className="text-4xl font-black italic text-indigo-600 tracking-tighter leading-none">Journally</h1>
                         <button onClick={(e) => {e.stopPropagation(); setIsMenuOpen(true);}} className="w-10 h-10 flex flex-col justify-center items-end gap-1.5 active:scale-90 transition-transform">
-                            <div className="w-7 h-1 bg-indigo-600 rounded-full"></div>
-                            <div className="w-5 h-1 bg-indigo-600 rounded-full"></div>
-                            <div className="w-7 h-1 bg-indigo-600 rounded-full"></div>
+                            <div className="w-7 h-1 bg-indigo-600 rounded-full italic"></div>
+                            <div className="w-5 h-1 bg-indigo-600 rounded-full italic"></div>
+                            <div className="w-7 h-1 bg-indigo-600 rounded-full italic"></div>
                         </button>
                     </header>
 
@@ -199,11 +196,11 @@
                                                     e.stopPropagation();
                                                     const n = prompt("Rename:", g.name);
                                                     if(n) supabaseClient.from('goals').update({name: n}).eq('id', g.id).then(() => fetchData(session));
-                                                }} className="bg-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm">Edit</button>
+                                                }} className="bg-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">Edit</button>
                                                 <button onClick={(e) => {
                                                     e.stopPropagation();
                                                     supabaseClient.from('goals').update({deleted_at: new Date().toISOString()}).eq('id', g.id).then(() => fetchData(session));
-                                                }} className="bg-red-500 px-4 py-2 rounded-xl text-[10px] font-black text-white uppercase shadow-sm">Archive</button>
+                                                }} className="bg-red-500 px-4 py-2 rounded-xl text-[10px] font-black text-white uppercase">Archive</button>
                                             </div>
                                             <div 
                                                 style={{ transform: swipedId === g.id ? 'translateX(-160px)' : 'translateX(0)' }}
@@ -223,9 +220,9 @@
                                     );
                                 })}
                                 <button onClick={async () => {
-                                    const n = prompt("Add a goal:");
+                                    const n = prompt("What's the goal?");
                                     if(n) { await supabaseClient.from('goals').insert([{name: n, user_id: session.user.id}]); fetchData(session); }
-                                }} className="w-full py-6 rounded-3xl border-2 border-dashed border-slate-200 text-slate-300 font-bold uppercase text-[10px] tracking-widest hover:border-indigo-200 transition-colors">+ ADD</button>
+                                }} className="w-full py-6 rounded-3xl border-2 border-dashed border-slate-200 text-slate-300 font-bold uppercase text-[10px] tracking-widest">+ ADD</button>
                             </div>
                         ) : (
                             <div className="space-y-6">
@@ -239,7 +236,7 @@
                                             if (!day) return <div key={i} />;
                                             const dKey = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                                             const isGreen = selectedGoalId === 'all' ? logs.some(l => l.logged_date === dKey) : logs.some(l => l.logged_date === dKey && l.goal_id === selectedGoalId);
-                                            return <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-[10px] font-bold ${isGreen ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-200'}`}>{day}</div>;
+                                            return <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-[10px] font-bold ${isGreen ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-50 text-slate-200'}`}>{day}</div>;
                                         })}
                                     </div>
                                 </div>
@@ -247,11 +244,11 @@
                         )}
                     </main>
 
-                    {/* NAV BAR */}
+                    {/* NAV */}
                     <nav className="fixed bottom-8 left-6 right-6 flex justify-center z-50">
                         <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-xl flex gap-2 w-full max-w-[260px]">
-                            <button onClick={() => setCurrentPage('daily')} className={`flex-1 py-3 rounded-full font-black text-[10px] tracking-widest transition-all ${currentPage === 'daily' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-400'}`}>DAILY</button>
-                            <button onClick={() => setCurrentPage('summary')} className={`flex-1 py-3 rounded-full font-black text-[10px] tracking-widest transition-all ${currentPage === 'summary' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-400'}`}>SUMMARY</button>
+                            <button onClick={() => setCurrentPage('daily')} className={`flex-1 py-3 rounded-full font-black text-[10px] tracking-widest transition-all ${currentPage === 'daily' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>DAILY</button>
+                            <button onClick={() => setCurrentPage('summary')} className={`flex-1 py-3 rounded-full font-black text-[10px] tracking-widest transition-all ${currentPage === 'summary' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>SUMMARY</button>
                         </div>
                     </nav>
                 </div>
