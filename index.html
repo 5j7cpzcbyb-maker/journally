@@ -1,187 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Journally - Full CRUD & Multiplayer</title>
-    <title>Journally - Stable Build</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-@@ -20,7 +20,7 @@
-<div id="root"></div>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Journally - Full Social Build</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-view { animation: fadeIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans select-none overflow-x-hidden">
+    <div id="root"></div>
 
-<script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+    <script type="text/babel">
         const { useState, useEffect } = React;
 
-const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
-@@ -33,7 +33,6 @@
-const [goals, setGoals] = useState([]);
-const [logs, setLogs] = useState([]);
-const [archivedGoals, setArchivedGoals] = useState([]);
-            const [groups, setGroups] = useState([]);
-const [status, setStatus] = useState('');
-const [showArchive, setShowArchive] = useState(false);
+        const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-@@ -42,57 +41,36 @@
+        function App() {
+            const [session, setSession] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [page, setPage] = useState('daily');
+            const [viewDate, setViewDate] = useState(new Date());
+            const [goals, setGoals] = useState([]);
+            const [sharedGoals, setSharedGoals] = useState([]);
+            const [logs, setLogs] = useState([]);
 
-const dateKey = viewDate.toISOString().split('T')[0];
+            const dateKey = viewDate.toISOString().split('T')[0];
 
-            // --- DATA FETCHING (Now Wrapped for re-use) ---
-            const refreshData = useCallback(async (currentSession) => {
-                const user = currentSession?.user || session?.user;
-                if (!user) return;
-            // 1. Core Fetch Function
-            async function refreshData(user) {
+            const refreshData = async (user) => {
                 const activeUser = user || session?.user;
                 if (!activeUser) return;
-
-setStatus('Syncing...');
-                try {
-                    const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).is('deleted_at', null);
-                    setGoals(g || []);
-                    
-                    const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', user.id).not('deleted_at', 'is', null);
-                    setArchivedGoals(arc || []);
-                    
-                    const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', user.id);
-                    setLogs(l || []);
-                    
-                    const { data: m } = await supabaseClient.from('memberships').select('group_id, groups(*)').eq('user_id', user.id);
-                    setGroups(m?.map(item => item.groups) || []);
-                } catch (err) {
-                    console.error("Sync Error:", err);
-                } finally {
-                    setStatus('');
-                }
-            }, [session]);
+                
+                // Fetch Private Goals
                 const { data: g } = await supabaseClient.from('goals').select('*').eq('user_id', activeUser.id).is('deleted_at', null);
-                setGoals(g || []);
-                
-                const { data: arc } = await supabaseClient.from('goals').select('*').eq('user_id', activeUser.id).not('deleted_at', 'is', null);
-                setArchivedGoals(arc || []);
-                
+                // Fetch Shared Goals
+                const { data: sg } = await supabaseClient.from('shared_goals').select('*');
+                // Fetch Logs
                 const { data: l } = await supabaseClient.from('logs').select('*').eq('user_id', activeUser.id);
+                
+                setGoals(g || []);
+                setSharedGoals(sg || []);
                 setLogs(l || []);
-                setStatus('');
-            }
-
-            // --- FIX: Proactive Session Listener ---
-            // 2. Stable Initial Load
-useEffect(() => {
-                // Check initial session
-                supabaseClient.auth.getSession().then(({ data: { session: initialSession } }) => {
-                    setSession(initialSession);
-                    if (initialSession) refreshData(initialSession);
-                });
-
-                // Listen for refreshes or auth changes
-                const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, currentSession) => {
-                    setSession(currentSession);
-                    if (currentSession) refreshData(currentSession);
-                });
-
-                return () => subscription.unsubscribe();
-            }, [refreshData]);
-
-            // --- GESTURES ---
-            const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
-            const handleTouchMove = (e, id) => {
-                const touchEnd = e.targetTouches[0].clientX;
-                if (touchStart - touchEnd > 70) setSwipedId(id); 
-                if (touchEnd - touchStart > 70) setSwipedId(null); 
             };
 
-            // --- DATABASE ACTIONS ---
-                const init = async () => {
-                    const { data: { session: s } } = await supabaseClient.auth.getSession();
+            useEffect(() => {
+                supabaseClient.auth.getSession().then(({ data: { session: s } }) => {
                     if (s) {
                         setSession(s);
-                        refreshData(s); // Fetch immediately upon getting session
-                    }
-                };
-                init();
+                        refreshData(s).then(() => setLoading(false));
+                    } else { setLoading(false); }
+                });
             }, []);
 
-            // 3. Actions
-const handleAddGoal = async () => {
-const name = prompt("Enter habit name:");
-if (!name) return;
-@@ -113,8 +91,7 @@
-};
-
-const hardDeleteGoal = async (id) => {
-                if (!confirm("Permanently delete this habit? All history will be wiped.")) return;
-                setStatus('Removing...');
-                if (!confirm("Permanently delete this habit?")) return;
-await supabaseClient.from('goals').delete().eq('id', id);
-refreshData();
-};
-@@ -129,7 +106,15 @@
-refreshData();
-};
-
-            if (!session) return <div className="p-20 text-center font-bold text-slate-400">Loading Session...</div>;
-            // Swipe Handlers
-            const onTS = (e) => setTouchStart(e.targetTouches[0].clientX);
-            const onTM = (e, id) => {
-                const touchEnd = e.targetTouches[0].clientX;
-                if (touchStart - touchEnd > 70) setSwipedId(id);
-                if (touchEnd - touchStart > 70) setSwipedId(null);
+            const toggleLog = async (goalId, isShared = false) => {
+                const existing = logs.find(l => l.goal_id === goalId && l.logged_date === dateKey);
+                if (existing) {
+                    await supabaseClient.from('logs').delete().eq('id', existing.id);
+                } else {
+                    await supabaseClient.from('logs').insert([{ 
+                        goal_id: goalId, 
+                        user_id: session.user.id, 
+                        logged_date: dateKey,
+                        is_shared: isShared 
+                    }]);
+                }
+                refreshData();
             };
 
-            if (!session) return <div className="p-20 text-center font-bold text-slate-300">Connecting...</div>;
+            if (loading) return <div className="h-screen flex items-center justify-center font-black text-indigo-600 animate-pulse uppercase tracking-widest text-xs">Syncing...</div>;
 
-return (
-<div className="max-w-md mx-auto p-6 pb-40 min-h-screen" onClick={() => setSwipedId(null)}>
-@@ -141,9 +126,9 @@ <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-{page === 'daily' && (
-<div className="animate-view space-y-4">
-<div className="bg-white p-4 rounded-3xl border border-slate-100 flex justify-between items-center mb-6" onClick={(e) => e.stopPropagation()}>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); refreshData(); }} className="p-2 font-bold text-indigo-600">←</button>
-<span className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); refreshData(); }} className="p-2 font-bold text-indigo-600">→</button>
-</div>
+            return (
+                <div className="max-w-md mx-auto p-6 pb-40 min-h-screen">
+                    <header className="flex justify-between items-center mb-8">
+                        <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
+                        <span className="text-[10px] font-bold text-green-500 uppercase">Live Sync</span>
+                    </header>
 
-{goals.map(g => (
-@@ -153,9 +138,9 @@ <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-<button onClick={() => { deleteGoal(g.id); setSwipedId(null); }} className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center">✕</button>
-</div>
-<div 
-                                        onTouchStart={handleTouchStart} onTouchMove={(e) => handleTouchMove(e, g.id)}
-                                        onTouchStart={onTS} onTouchMove={(e) => onTM(e, g.id)}
-style={{ transform: swipedId === g.id ? 'translateX(-130px)' : 'translateX(0)' }}
-                                        className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out cursor-pointer"
-                                        className="relative z-10 p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center transition-transform duration-300 ease-out"
-onClick={() => swipedId === g.id ? setSwipedId(null) : toggleLog(g.id)}
->
-<span className={`font-bold ${logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) ? 'text-indigo-600' : 'text-slate-700'}`}>{g.name}</span>
-@@ -180,24 +165,8 @@ <h1 className="text-2xl font-black italic text-indigo-600">Journally</h1>
-</div>
-)}
+                    {page === 'daily' && (
+                        <div className="animate-view space-y-4">
+                            {/* Daily Habit List */}
+                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">My Habits</h2>
+                            {goals.map(g => (
+                                <div key={g.id} onClick={() => toggleLog(g.id)} className="p-6 bg-white border-2 border-slate-50 rounded-[2rem] flex justify-between items-center shadow-sm">
+                                    <span className="font-bold text-slate-700">{g.name}</span>
+                                    {logs.find(l => l.goal_id === g.id && l.logged_date === dateKey) && <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px]">✓</div>}
+                                </div>
+                            ))}
+
+                            {/* Shared Habit List */}
+                            {sharedGoals.length > 0 && (
+                                <>
+                                    <h2 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest ml-2 mt-8">Shared with Friends</h2>
+                                    {sharedGoals.map(sg => (
+                                        <div key={sg.id} onClick={() => toggleLog(sg.id, true)} className="p-6 bg-indigo-50/50 border-2 border-indigo-100 rounded-[2rem] flex justify-between items-center">
+                                            <span className="font-bold text-indigo-900">{sg.name}</span>
+                                            {logs.find(l => l.goal_id === sg.id && l.logged_date === dateKey) && <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px]">✓</div>}
+                                        </div>
+                                    ))}
+                                </>
+                            )}
+                        </div>
+                    )}
 
                     {page === 'social' && (
-                        <div className="animate-view space-y-6">
-                            <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 text-center">
-                                <p className="text-indigo-600 font-bold">Multiplayer Mode</p>
-                                <p className="text-xs text-indigo-400 mt-1">Connect with friends to see progress</p>
-                            </div>
-                            {groups.length === 0 && <p className="text-center text-slate-400 text-sm mt-10">No groups joined yet.</p>}
+                        <div className="animate-view p-10 text-center">
+                            <button 
+                                onClick={async () => {
+                                    const name = prompt("Shared Habit Name:");
+                                    if(name) {
+                                        // Update this line if your column is called user_id instead of creator_id!
+                                        await supabaseClient.from('shared_goals').insert([{ name, user_id: session.user.id }]);
+                                        refreshData();
+                                        setPage('daily');
+                                    }
+                                }}
+                                className="bg-indigo-600 text-white px-8 py-4 rounded-full font-bold shadow-lg"
+                            >
+                                + Create Shared Habit
+                            </button>
                         </div>
                     )}
 
-                    {page === 'summary' && (
-                        <div className="animate-view space-y-4">
-                            <h2 className="font-bold text-slate-400 uppercase text-xs tracking-[0.2em] mb-4">Consistency Heatmap</h2>
-                            <div className="grid grid-cols-7 gap-2">
-                                {[...Array(28)].map((_, i) => <div key={i} className="aspect-square bg-white border border-slate-100 rounded-lg"></div>)}
-                            </div>
+                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center">
+                        <div className="bg-white border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1">
+                            {['daily', 'summary', 'social'].map(p => (
+                                <button key={p} onClick={() => setPage(p)} className={`px-6 py-4 rounded-full font-black text-[9px] tracking-widest ${page === p ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
+                                    {p.toUpperCase()}
+                                </button>
+                            ))}
                         </div>
-                    )}
-                    {page === 'summary' && <div className="p-10 text-center text-slate-400">Stats coming soon...</div>}
-                    {page === 'social' && <div className="p-10 text-center text-slate-400">Social feed coming soon...</div>}
+                    </nav>
+                </div>
+            );
+        }
 
-<nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none" onClick={(e) => e.stopPropagation()}>
-<div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
