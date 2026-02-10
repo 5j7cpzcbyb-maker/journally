@@ -3,118 +3,195 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Journally Debug Mode</title>
+    <title>Journally Cloud</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 </head>
-<body class="bg-slate-50">
+<body class="bg-slate-100">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // --- CONFIGURATION ---
-        const SUPABASE_URL = 'PASTE_YOUR_URL_HERE';
-        const SUPABASE_KEY = 'PASTE_YOUR_ANON_KEY_HERE';
-        const APP_KEY = "1234"; 
-
-        // Initialize Supabase
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        // --- PASTE YOUR ACTUAL CREDENTIALS HERE ---
+        const SUPABASE_URL = 'https://your-project.url.supabase.co';
+        const SUPABASE_KEY = 'your-anon-key';
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         function App() {
+            const [user, setUser] = useState({ username: '', password: '' });
             const [isLoggedIn, setIsLoggedIn] = useState(false);
-            const [passInput, setPassInput] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [status, setStatus] = useState('');
+
             const [goals, setGoals] = useState([]);
             const [history, setHistory] = useState({});
-            const [loading, setLoading] = useState(false);
+            const [currentDate, setCurrentDate] = useState(new Date());
+            const [newGoal, setNewGoal] = useState('');
 
-            const loadData = async () => {
+            const dateKey = currentDate.toISOString().split('T')[0];
+
+            // --- DATABASE FUNCTIONS ---
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
                 setLoading(true);
-                console.log("Attempting to fetch data...");
-                try {
-                    const { data, error } = await supabaseClient
-                        .from('journally_data')
-                        .select('content')
-                        .eq('user_id', 'main_user')
-                        .single();
+                setStatus('Connecting...');
 
-                    if (error) {
-                        console.warn("No existing data found, starting fresh.");
-                    } else if (data && data.content) {
+                const { data, error } = await supabase
+                    .from('journally_data')
+                    .select('*')
+                    .eq('user_id', user.username.toLowerCase())
+                    .single();
+
+                if (data) {
+                    // Check password stored in the content blob
+                    if (data.content.password === user.password) {
                         setGoals(data.content.goals || []);
                         setHistory(data.content.history || {});
-                        console.log("Data loaded successfully!");
+                        setIsLoggedIn(true);
+                    } else {
+                        alert("Incorrect password for this user.");
                     }
-                } catch (err) {
-                    alert("Connection Error: " + err.message);
+                } else {
+                    const confirmNew = confirm("User not found. Create new account with this password?");
+                    if (confirmNew) {
+                        const initialData = { user_id: user.username.toLowerCase(), content: { password: user.password, goals: [], history: {} }};
+                        await supabase.from('journally_data').insert(initialData);
+                        setIsLoggedIn(true);
+                    }
                 }
                 setLoading(false);
             };
 
-            const saveData = async (updatedGoals, updatedHistory) => {
-                console.log("Saving to Supabase...");
-                const { error } = await supabaseClient
+            const syncWithCloud = async (updatedGoals = goals, updatedHistory = history) => {
+                setStatus('Saving...');
+                const { error } = await supabase
                     .from('journally_data')
                     .upsert({ 
-                        user_id: 'main_user', 
-                        content: { goals: updatedGoals, history: updatedHistory } 
+                        user_id: user.username.toLowerCase(), 
+                        content: { password: user.password, goals: updatedGoals, history: updatedHistory } 
                     }, { onConflict: 'user_id' });
                 
-                if (error) {
-                    alert("FAILED TO SAVE: " + error.message);
-                    console.error(error);
-                } else {
-                    console.log("Saved successfully!");
-                }
+                if (error) setStatus('Error saving!');
+                else setTimeout(() => setStatus(''), 2000);
             };
 
-            const handleLogin = (e) => {
+            const toggleTask = (id) => {
+                const dayTasks = history[dateKey] || [];
+                const newDayTasks = dayTasks.includes(id) ? dayTasks.filter(tid => tid !== id) : [...dayTasks, id];
+                const newHistory = { ...history, [dateKey]: newDayTasks };
+                setHistory(newHistory);
+                syncWithCloud(goals, newHistory);
+            };
+
+            const addGoal = (e) => {
                 e.preventDefault();
-                if (passInput === APP_KEY) {
-                    setIsLoggedIn(true);
-                    loadData();
-                } else {
-                    alert("Wrong Password");
-                }
+                if (!newGoal) return;
+                const newGoals = [...goals, { id: Date.now(), text: newGoal }];
+                setGoals(newGoals);
+                setNewGoal('');
+                syncWithCloud(newGoals, history);
             };
 
-            // Simplified Add Goal for testing
-            const addGoal = async () => {
-                const text = prompt("Enter goal name:");
-                if (!text) return;
-                const updatedGoals = [...goals, { id: Date.now(), text }];
-                setGoals(updatedGoals);
-                await saveData(updatedGoals, history);
-            };
+            // --- UI COMPONENTS ---
 
             if (!isLoggedIn) {
                 return (
-                    <div className="flex items-center justify-center min-h-screen">
-                        <form onSubmit={handleLogin} className="p-8 bg-white rounded shadow-xl">
-                            <input 
-                                type="password" 
-                                value={passInput}
-                                onChange={(e) => setPassInput(e.target.value)}
-                                placeholder="Access Key"
-                                className="border p-2 block mb-4"
-                            />
-                            <button className="bg-blue-500 text-white p-2 w-full">Login</button>
-                        </form>
+                    <div className="min-h-screen flex items-center justify-center p-4">
+                        <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm border border-slate-200">
+                            <h1 className="text-3xl font-black text-indigo-600 text-center mb-2">Journally</h1>
+                            <p className="text-slate-400 text-center mb-8 text-sm font-medium uppercase tracking-widest">Cloud Sync Active</p>
+                            <form onSubmit={handleLogin} className="space-y-4">
+                                <input 
+                                    className="w-full p-4 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Username"
+                                    onChange={e => setUser({...user, username: e.target.value})}
+                                    required
+                                />
+                                <input 
+                                    type="password"
+                                    className="w-full p-4 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Password"
+                                    onChange={e => setUser({...user, password: e.target.value})}
+                                    required
+                                />
+                                <button className="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-200">
+                                    {loading ? 'Authenticating...' : 'Login / Register'}
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 );
             }
 
             return (
-                <div className="p-8 max-w-md mx-auto">
-                    <h1 className="text-2xl font-bold mb-4">Cloud Test</h1>
-                    <button onClick={addGoal} className="bg-green-500 text-white p-4 rounded w-full mb-4">+ Add & Save to Cloud</button>
-                    <div className="space-y-2">
-                        {goals.map(g => <div key={g.id} className="p-3 bg-white border rounded">{g.text}</div>)}
+                <div className="min-h-screen p-4 md:p-8 flex flex-col items-center">
+                    <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
+                        {/* Header */}
+                        <div className="bg-indigo-600 p-8 text-white relative">
+                            <div className="flex justify-between items-center mb-6">
+                                <span className="text-xs font-bold uppercase tracking-widest opacity-80">Hello, {user.username}</span>
+                                <div className="flex gap-2">
+                                    <button onClick={() => syncWithCloud()} className="bg-indigo-500 p-2 rounded-lg text-[10px] font-bold uppercase tracking-tighter">Sync Now</button>
+                                    <button onClick={() => location.reload()} className="bg-red-500 p-2 rounded-lg text-[10px] font-bold uppercase tracking-tighter">Logout</button>
+                                </div>
+                            </div>
+                            
+                            <div className="flex justify-between items-center bg-indigo-900/30 rounded-2xl p-4">
+                                <button onClick={() => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate()-1)))} className="text-2xl">←</button>
+                                <div className="text-center">
+                                    <p className="text-[10px] opacity-60 uppercase font-black tracking-widest mb-1">{currentDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
+                                    <p className="text-xl font-bold">{currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+                                </div>
+                                <button onClick={() => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate()+1)))} className="text-2xl">→</button>
+                            </div>
+                            {status && <div className="absolute bottom-1 right-8 text-[10px] font-bold italic opacity-70">{status}</div>}
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-8">
+                            <form onSubmit={addGoal} className="flex gap-2 mb-8">
+                                <input 
+                                    value={newGoal}
+                                    onChange={e => setNewGoal(e.target.value)}
+                                    placeholder="Add new habit..."
+                                    className="flex-1 p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 border-none font-medium"
+                                />
+                                <button className="bg-indigo-600 text-white w-14 rounded-2xl font-bold text-xl">+</button>
+                            </form>
+
+                            <div className="space-y-4">
+                                {goals.map(goal => {
+                                    const isDone = (history[dateKey] || []).includes(goal.id);
+                                    return (
+                                        <div key={goal.id} 
+                                             onClick={() => toggleTask(goal.id)}
+                                             className={`group flex items-center gap-4 p-5 rounded-[1.5rem] cursor-pointer border-2 transition-all duration-300 ${
+                                                isDone ? 'bg-emerald-50 border-emerald-100' : 'bg-white border-slate-50 hover:border-indigo-100'
+                                             }`}>
+                                            <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all ${
+                                                isDone ? 'bg-emerald-500 border-emerald-500 scale-110' : 'border-slate-200'
+                                            }`}>
+                                                {isDone && <span className="text-white text-sm font-bold">✓</span>}
+                                            </div>
+                                            <span className={`flex-1 font-bold ${isDone ? 'line-through text-slate-400' : 'text-slate-700'}`}>{goal.text}</span>
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setGoals(goals.filter(g => g.id !== goal.id)); syncWithCloud(goals.filter(g => g.id !== goal.id), history); }}
+                                                className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition px-2"
+                                            >✕</button>
+                                        </div>
+                                    );
+                                })}
+                                {goals.length === 0 && (
+                                    <div className="text-center py-12 text-slate-300 font-medium italic">Your list is empty...</div>
+                                )}
+                            </div>
+                        </div>
                     </div>
-                    {loading && <p>Syncing...</p>}
                 </div>
             );
         }
