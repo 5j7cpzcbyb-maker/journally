@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Journally Cloud - Pro</title>
+    <title>Journally - Swipe Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -12,15 +12,15 @@
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fadeIn { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes slideInRight { from { transform: translateX(-100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .animate-slide { animation: slideInRight 0.3s ease-out forwards; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans">
+<body class="bg-slate-50 text-slate-900 font-sans select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect } = React;
 
         const SUPABASE_URL = 'https://thxyvciairbocmogbsaa.supabase.co'; 
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRoeHl2Y2lhaXJib2Ntb2dic2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NzI0MzYsImV4cCI6MjA4NjI0ODQzNn0.0nUXzaBsDb6fHpGshOFWwNMuq6FuaQt6dwAmJJQqRS4'; 
@@ -29,222 +29,130 @@
         function App() {
             const [session, setSession] = useState(null);
             const [page, setPage] = useState('daily');
-            const [selectedGoal, setSelectedGoal] = useState(null);
             const [goals, setGoals] = useState([]);
             const [history, setHistory] = useState({});
-            const [viewDate, setViewDate] = useState(new Date());
-            const [status, setStatus] = useState('');
-            const [newGoal, setNewGoal] = useState('');
+            const [groups, setGroups] = useState([]);
+            const [goalGroups, setGoalGroups] = useState({});
             const [editingIndex, setEditingIndex] = useState(null);
             const [editValue, setEditValue] = useState('');
+            const [touchStart, setTouchStart] = useState(0);
+            const [status, setStatus] = useState('');
 
-            const dateKey = viewDate.toISOString().split('T')[0];
+            const dateKey = new Date().toISOString().split('T')[0];
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => {
                     setSession(session);
                     if (session) loadUserData(session.user.id);
                 });
-                const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
-                    setSession(session);
-                    if (session) loadUserData(session.user.id);
-                });
-                return () => subscription.unsubscribe();
             }, []);
 
             async function loadUserData(userId) {
                 setStatus('Syncing...');
-                const { data, error } = await supabaseClient.from('journally_data').select('content').eq('user_id', userId).single();
-                if (error && error.code === 'PGRST116') {
-                    await supabaseClient.from('journally_data').insert({ user_id: userId, content: { goals: [], history: {} } });
-                } else if (data) {
+                const { data } = await supabaseClient.from('journally_data').select('content').eq('user_id', userId).single();
+                if (data) {
                     setGoals(data.content.goals || []);
                     setHistory(data.content.history || {});
-                    if (data.content.goals?.length > 0) setSelectedGoal(data.content.goals[0]);
+                    setGroups(data.content.groups || []);
+                    setGoalGroups(data.content.goalGroups || {});
                 }
                 setStatus('');
             }
 
-            async function sync(updatedGoals, updatedHistory) {
+            async function sync(updated) {
                 if (!session) return;
-                setStatus('Saving...');
-                await supabaseClient.from('journally_data').upsert({ user_id: session.user.id, content: { goals: updatedGoals, history: updatedHistory } });
-                setStatus('');
+                const content = {
+                    goals: updated.goals || goals,
+                    history: updated.history || history,
+                    groups: updated.groups || groups,
+                    goalGroups: updated.goalGroups || goalGroups
+                };
+                await supabaseClient.from('journally_data').upsert({ user_id: session.user.id, content });
             }
 
+            // Swipe Logic
+            const handleTouchStart = (e) => setTouchStart(e.targetTouches[0].clientX);
+            const handleTouchEnd = (e, index, goalName) => {
+                const touchEnd = e.changedTouches[0].clientX;
+                if (touchStart - touchEnd < -70) { // Swipe Right
+                    setEditingIndex(index);
+                    setEditValue(goalName);
+                }
+                if (touchStart - touchEnd > 70) { // Swipe Left
+                    setEditingIndex(null);
+                }
+            };
+
             const toggleGoal = (goal) => {
-                if (editingIndex !== null) return; // Prevent toggle while editing
+                if (editingIndex !== null) return;
                 const dayHistory = history[dateKey] || [];
                 const updatedDay = dayHistory.includes(goal) ? dayHistory.filter(g => g !== goal) : [...dayHistory, goal];
                 const updatedHistory = { ...history, [dateKey]: updatedDay };
                 setHistory(updatedHistory);
-                sync(goals, updatedHistory);
-            };
-
-            const addGoal = () => {
-                if (!newGoal.trim()) return;
-                const updated = [...goals, newGoal.trim()];
-                setGoals(updated);
-                if (!selectedGoal) setSelectedGoal(newGoal.trim());
-                setNewGoal('');
-                sync(updated, history);
-            };
-
-            const deleteGoal = (index) => {
-                const goalToDelete = goals[index];
-                const updatedGoals = goals.filter((_, i) => i !== index);
-                
-                // Also clean up history for that goal to save space
-                const updatedHistory = { ...history };
-                Object.keys(updatedHistory).forEach(date => {
-                    updatedHistory[date] = updatedHistory[date].filter(g => g !== goalToDelete);
-                });
-
-                setGoals(updatedGoals);
-                setHistory(updatedHistory);
-                setEditingIndex(null);
-                if (selectedGoal === goalToDelete) setSelectedGoal(updatedGoals[0] || null);
-                sync(updatedGoals, updatedHistory);
+                sync({ history: updatedHistory });
             };
 
             const saveEdit = (index) => {
-                if (!editValue.trim()) return;
-                const oldGoal = goals[index];
-                const newGoalName = editValue.trim();
-                const updatedGoals = [...goals];
-                updatedGoals[index] = newGoalName;
-
-                // Update history references from old name to new name
-                const updatedHistory = { ...history };
-                Object.keys(updatedHistory).forEach(date => {
-                    updatedHistory[date] = updatedHistory[date].map(g => g === oldGoal ? newGoalName : g);
-                });
-
-                setGoals(updatedGoals);
-                setHistory(updatedHistory);
+                const updated = [...goals];
+                updated[index] = editValue;
+                setGoals(updated);
                 setEditingIndex(null);
-                sync(updatedGoals, updatedHistory);
+                sync({ goals: updated });
             };
 
-            const calendarData = useMemo(() => {
-                const year = viewDate.getFullYear();
-                const month = viewDate.getMonth();
-                const firstDay = new Date(year, month, 1).getDay();
-                const daysInMonth = new Date(year, month + 1, 0).getDate();
-                let completedCount = 0;
-                if (selectedGoal) {
-                    for (let d = 1; d <= daysInMonth; d++) {
-                        const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                        if (history[key]?.includes(selectedGoal)) completedCount++;
-                    }
-                }
-                const percentage = daysInMonth > 0 ? Math.round((completedCount / daysInMonth) * 100) : 0;
-                return { firstDay, daysInMonth, percentage, completedCount };
-            }, [viewDate, history, selectedGoal]);
-
-            if (!session) return <div className="p-20 text-center text-indigo-600 font-bold animate-pulse">Establishing Secure Connection...</div>;
+            if (!session) return <div className="p-20 text-center font-bold text-indigo-600">Loading Dashboard...</div>;
 
             return (
-                <div className="max-w-md mx-auto p-6 pb-32">
-                    <div className="flex justify-between items-center mb-6">
+                <div className="max-w-md mx-auto p-6 pb-40">
+                    <header className="flex justify-between items-center mb-8">
                         <h1 className="text-2xl font-black text-indigo-600 italic">Journally</h1>
-                        <span className="text-[10px] font-bold bg-indigo-100 text-indigo-600 px-3 py-1 rounded-full uppercase tracking-widest">{status || 'Secure'}</span>
-                    </div>
-
-                    {page === 'daily' ? (
-                        <div className="animate-fadeIn">
-                            <div className="flex items-center justify-between bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()-1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">←</button>
-                                <p className="font-bold text-slate-700">{viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-                                <button onClick={() => { const d = new Date(viewDate); d.setDate(d.getDate()+1); setViewDate(d); }} className="p-2 font-bold text-indigo-600">→</button>
-                            </div>
-
-                            <div className="space-y-3">
-                                {goals.map((g, i) => (
-                                    <div key={i} className="relative group">
-                                        {editingIndex === i ? (
-                                            <div className="p-3 bg-white border-2 border-indigo-500 rounded-3xl flex gap-2 animate-fadeIn">
-                                                <input autoFocus className="flex-1 px-3 outline-none font-bold" value={editValue} onChange={e => setEditValue(e.target.value)} />
-                                                <button onClick={() => saveEdit(i)} className="bg-green-500 text-white px-3 py-1 rounded-xl text-xs font-bold text-white">Save</button>
-                                                <button onClick={() => deleteGoal(i)} className="bg-red-500 text-white px-3 py-1 rounded-xl text-xs font-bold text-white">Del</button>
-                                                <button onClick={() => setEditingIndex(null)} className="text-slate-400 text-xs px-2">✕</button>
-                                            </div>
-                                        ) : (
-                                            <div onClick={() => toggleGoal(g)} className={`p-5 rounded-3xl flex justify-between items-center transition-all border-2 active:scale-95 cursor-pointer ${history[dateKey]?.includes(g) ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400'}`}>
-                                                <span className="font-bold">{g}</span>
-                                                <div className="flex items-center gap-3">
-                                                    <button onClick={(e) => { e.stopPropagation(); setEditingIndex(i); setEditValue(g); }} className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-black/5 rounded-lg text-[10px] font-bold uppercase tracking-tighter">Edit</button>
-                                                    {history[dateKey]?.includes(g) && <span className="text-xl font-bold">✓</span>}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="animate-fadeIn">
-                            <h2 className="text-xl font-bold mb-4 text-slate-800">Monthly Insights</h2>
-                            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4 mb-6 px-1">
-                                {goals.map((g, i) => (
-                                    <button key={i} onClick={() => setSelectedGoal(g)} className={`flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-[10px] font-black border-2 transition-all ${selectedGoal === g ? 'bg-indigo-600 border-indigo-600 text-white scale-110 shadow-xl' : 'bg-white border-slate-200 text-slate-400'}`}>
-                                        {g.substring(0, 3).toUpperCase()}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {selectedGoal && (
-                                <div className="space-y-4">
-                                    <div className="bg-indigo-600 p-6 rounded-[2.5rem] text-white shadow-xl flex items-center justify-between overflow-hidden relative">
-                                        <div className="z-10">
-                                            <p className="text-[10px] uppercase font-bold opacity-80 tracking-widest">Consistency</p>
-                                            <h3 className="text-2xl font-black mb-1">{selectedGoal}</h3>
-                                            <p className="text-sm opacity-90">{calendarData.completedCount} days completed</p>
-                                        </div>
-                                        <div className="relative z-10 flex items-center justify-center">
-                                            <svg className="w-20 h-20 transform -rotate-90">
-                                                <circle cx="40" cy="40" r="34" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-indigo-400/30" />
-                                                <circle cx="40" cy="40" r="34" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={213.6} strokeDashoffset={213.6 - (213.6 * calendarData.percentage) / 100} strokeLinecap="round" className="text-white transition-all duration-1000" />
-                                            </svg>
-                                            <span className="absolute text-sm font-black">{calendarData.percentage}%</span>
-                                        </div>
-                                    </div>
-                                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
-                                        <div className="grid grid-cols-7 gap-2 text-center">
-                                            {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-slate-300 mb-2">{d}</div>)}
-                                            {Array.from({ length: calendarData.firstDay }).map((_, i) => <div key={i} />)}
-                                            {Array.from({ length: calendarData.daysInMonth }).map((_, i) => {
-                                                const day = i + 1;
-                                                const checkKey = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                                const isDone = history[checkKey]?.includes(selectedGoal);
-                                                return (
-                                                    <div key={i} className={`aspect-square flex items-center justify-center rounded-xl text-xs font-bold transition-all ${isDone ? 'bg-green-500 text-white shadow-md' : 'bg-slate-50 text-slate-300'}`}>
-                                                        {day}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
-                        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-2 pointer-events-auto">
-                            <button onClick={() => setPage('daily')} className={`px-8 py-3 rounded-full font-bold transition-all ${page === 'daily' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>Daily</button>
-                            <button onClick={() => setPage('summary')} className={`px-8 py-3 rounded-full font-bold transition-all ${page === 'summary' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>Summary</button>
-                        </div>
-                    </div>
+                        <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">{status || 'Encrypted'}</p>
+                    </header>
 
                     {page === 'daily' && (
-                        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 w-full max-w-[280px]">
-                            <div className="flex gap-2 bg-white p-2 rounded-2xl shadow-xl border border-slate-100">
-                                <input value={newGoal} onChange={e => setNewGoal(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && addGoal()} className="flex-1 px-3 text-xs font-bold outline-none" placeholder="Add habit..." />
-                                <button onClick={addGoal} className="bg-indigo-600 text-white w-10 h-10 rounded-xl font-bold hover:scale-110 transition">+</button>
-                            </div>
+                        <div className="space-y-3">
+                            {goals.map((g, i) => (
+                                <div 
+                                    key={i} 
+                                    className="relative overflow-hidden rounded-3xl"
+                                    onTouchStart={handleTouchStart}
+                                    onTouchEnd={(e) => handleTouchEnd(e, i, g)}
+                                >
+                                    {editingIndex === i ? (
+                                        <div className="bg-slate-100 p-4 flex gap-2 animate-slide">
+                                            <input 
+                                                className="flex-1 bg-white px-4 py-2 rounded-xl font-bold outline-none border-2 border-indigo-200" 
+                                                value={editValue} 
+                                                onChange={e => setEditValue(e.target.value)}
+                                            />
+                                            <button onClick={() => saveEdit(i)} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs">Save</button>
+                                            <button onClick={() => setEditingIndex(null)} className="bg-white text-slate-400 px-3 rounded-xl border font-bold">✕</button>
+                                        </div>
+                                    ) : (
+                                        <div 
+                                            onClick={() => toggleGoal(g)}
+                                            className={`p-6 flex justify-between items-center transition-all duration-300 cursor-pointer ${history[dateKey]?.includes(g) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white border-2 border-slate-100 text-slate-500'}`}
+                                        >
+                                            <span className="font-bold text-lg">{g}</span>
+                                            {history[dateKey]?.includes(g) && <span className="text-2xl">✓</span>}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            <p className="text-center text-[10px] text-slate-400 font-bold uppercase mt-4">Tip: Swipe right on a habit to edit</p>
                         </div>
                     )}
+
+                    {/* Navbar */}
+                    <nav className="fixed bottom-0 left-0 right-0 p-6 flex justify-center pointer-events-none">
+                        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-2 rounded-full shadow-2xl flex gap-1 pointer-events-auto">
+                            {['daily', 'social'].map(p => (
+                                <button key={p} onClick={() => setPage(p)} className={`px-10 py-4 rounded-full font-black text-[10px] tracking-widest transition-all ${page === p ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-400'}`}>
+                                    {p.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                    </nav>
                 </div>
             );
         }
